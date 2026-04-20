@@ -476,7 +476,7 @@ impl ModuleFactory for BarModuleFactory {
                 popup.hide();
             }
             ModuleUpdateEvent::LockVisible(lock) => {
-                println!("Setting bar locked status: {lock}");
+                debug!("Setting bar locked status: {lock}");
                 bar.set_locked(lock);
             }
             _ => {}
