@@ -229,11 +229,9 @@ impl Module<gtk::Box> for TrayModule {
 
                 while let Ok(message) = tray_rx.recv().await {
                     match &message {
-                        Event::Add(address, _) => {
-                            if !known_ids.insert(address.clone()) {
-                                debug!("Skipping duplicate tray item: {address}");
-                                continue;
-                            }
+                        Event::Add(address, _) if !known_ids.insert(address.clone()) => {
+                            debug!("Skipping duplicate tray item: {address}");
+                            continue;
                         }
                         Event::Remove(address) => {
                             known_ids.remove(address);
