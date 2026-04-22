@@ -64,15 +64,26 @@ Information on the profiles system can be found [here](profiles).
       "max_volume": 100,
       "truncate": "middle",
       "icons": {
-        "volume_high": "󰕾",
-        "volume_medium": "󰖀",
-        "volume_low": "󰕿",
+        "volume": "󰕾",
         "muted": "󰝟"
+      },
+      "profiles": {
+        "medium": {
+          "when": 66.66,
+          "icons": {
+            "volume": "󰖀"
+          }
+        },
+        "low": {
+          "when": 33.33,
+          "icons": {
+            "volume": "󰕿"
+          }
+        }
       }
     }
   ]
 }
-
 ```
 
 </details>
@@ -86,13 +97,23 @@ type = "volume"
 format = "{icon} {percentage}%"
 sink_slider_orientation = "vertical"
 max_volume = 100
-truncate = "middle"
+truncate = "end"
 
 [end.icons]
-volume_high = "󰕾"
-volume_medium = "󰖀"
-volume_low = "󰕿"
+volume = "󰕾"
 muted = "󰝟"
+
+[end.profiles.medium]
+when = 66.66
+
+[end.profiles.medium.icons]
+volume = "󰖀"
+
+[end.profiles.low]
+when = 33.33
+
+[end.profiles.low.icons]
+volume = "󰕿"
 ```
 
 </details>
@@ -102,16 +123,23 @@ muted = "󰝟"
 
 ```yaml
 end:
-  - type: "volume"
-    format: "{icon} {percentage}%"
-    sink_slider_orientation: "vertical"
+  - type: volume
+    format: '{icon} {percentage}%'
+    sink_slider_orientation: vertical
     max_volume: 100
-    truncate: "middle"
+    truncate: end
     icons:
-      volume_high: "󰕾"
-      volume_medium: "󰖀"
-      volume_low: "󰕿"
-      muted: "󰝟"
+      volume: 󰕾
+      muted: 󰝟
+    profiles:
+      medium:
+        when: 66.66
+        icons:
+          volume: 󰖀
+      low:
+        when: 33.33
+        icons:
+          volume: 󰕿
 ```
 
 </details>
@@ -128,10 +156,16 @@ end:
       sink_slider_orientation = "vertical"
       max_volume = 100
       truncate = "end"
-      icons.volume_high = "󰕾"
-      icons.volume_medium = "󰖀"
-      icons.volume_low = "󰕿"
+      icons.volume = "󰕾"
       icons.muted = "󰝟"
+
+      profiles = {
+        medium.when = 66.66
+        medium.icons.volume = "󰖀"
+
+        low.when = 33.33
+        low.icons.volume = "󰕿"
+      }
     }
   ]
 }
