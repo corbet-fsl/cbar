@@ -127,6 +127,7 @@ impl Deref for IconButton {
     feature = "menu",
     feature = "music",
     feature = "workspaces",
+    feature = "network_manager"
 ))]
 pub struct IconLabel {
     provider: image::Provider,
@@ -144,7 +145,8 @@ pub struct IconLabel {
     feature = "keyboard",
     feature = "menu",
     feature = "music",
-    feature = "workspaces"
+    feature = "workspaces",
+    feature = "network_manager"
 ))]
 impl IconLabel {
     pub fn new(input: &str, size: i32, image_provider: &image::Provider) -> Self {
@@ -241,7 +243,8 @@ impl IconLabel {
     feature = "keyboard",
     feature = "menu",
     feature = "music",
-    feature = "workspaces"
+    feature = "workspaces",
+    feature = "network_manager"
 ))]
 impl Deref for IconLabel {
     type Target = gtk::Box;
