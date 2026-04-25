@@ -7,7 +7,8 @@
     feature = "menu",
     feature = "music",
     feature = "notifications",
-    feature = "workspaces"
+    feature = "workspaces",
+    feature = "network_manager"
 ))]
 mod gtk;
 mod provider;
@@ -21,7 +22,8 @@ mod provider;
     feature = "menu",
     feature = "music",
     feature = "notifications",
-    feature = "workspaces"
+    feature = "workspaces",
+    feature = "network_manager"
 ))]
 pub use self::gtk::*;
 pub use provider::Provider;

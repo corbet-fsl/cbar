@@ -1,17 +1,19 @@
 mod config;
 
+use std::rc::Rc;
+
 use crate::channels::{AsyncSenderExt, BroadcastReceiverExt};
 use crate::clients::networkmanager::state::DeviceTypeData;
 use crate::clients::networkmanager::{Client, DeviceType, NetworkManagerUpdate};
 use crate::gtk_helpers::IronbarGtkExt;
-use crate::image::Provider;
+use crate::image::IconLabel;
 use crate::modules::{Module, ModuleInfo, ModuleParts, WidgetContext};
 use crate::{module_impl, spawn};
 
 use color_eyre::Result;
+use gtk::Box as GtkBox;
 use gtk::prelude::WidgetExt;
 use gtk::prelude::*;
-use gtk::{Box as GtkBox, ContentFit, Picture};
 use tokio::sync::mpsc::Receiver;
 
 pub use config::NetworkManagerModule;
@@ -141,26 +143,17 @@ impl Module<GtkBox> for NetworkManagerModule {
         let image_provider = context.ironbar.image_provider();
 
         let icon_size = self.icon_size;
+        let mut icons: Vec<Rc<IconLabel>> = Vec::new();
         let mut manager = self.profiles.attach(&container, move |_, event| {
-            let (widget, image_provider): (gtk::Widget, Provider) = event.data;
+            let icon: Rc<IconLabel> = event.data;
             let icon_name = event.profile.icon.clone();
             tracing::debug!("profiles update: icon_name={icon_name}");
             if icon_name.is_empty() {
-                widget.set_visible(false);
+                icon.set_visible(false);
                 return;
             }
 
-            glib::spawn_future_local(async move {
-                image_provider
-                    .load_into_picture_silent(
-                        &icon_name,
-                        icon_size,
-                        false,
-                        widget.downcast_ref::<Picture>().expect("should be Picture"),
-                    )
-                    .await;
-                widget.set_visible(true)
-            });
+            icon.set_label(Some(&icon_name));
         });
 
         let container_clone = container.clone();
@@ -174,27 +167,27 @@ impl Module<GtkBox> for NetworkManagerModule {
                     if container.children().count() > devices.len() {
                         for child in container.children().skip(devices.len()) {
                             container.remove(&child);
+                            icons.pop();
                         }
                     } else {
                         while container.children().count() < devices.len() {
-                            let icon = Picture::builder()
-                                .content_fit(ContentFit::ScaleDown)
-                                .css_classes(["icon"])
-                                .build();
-                            container.append(&icon);
+                            let icon = Rc::new(IconLabel::new("", icon_size, &image_provider));
+                            icon.set_css_classes(&["icon"]);
+                            container.append(&**icon);
+                            icons.push(icon);
                         }
                     }
 
                     // update each icon to match the device state
-                    for (device, widget) in devices.iter().zip(container.children()) {
+                    for (device, icon) in devices.iter().zip(icons.iter()) {
                         match self.get_profile_state(device) {
                             Some(state) => {
                                 let tooltip = self.get_tooltip(device);
-                                widget.set_tooltip_text(Some(&tooltip));
-                                manager.update(state, (widget, image_provider.clone()));
+                                icon.set_tooltip_text(Some(&tooltip));
+                                manager.update(state, icon.clone());
                             }
                             _ => {
-                                widget.set_visible(false);
+                                icon.set_visible(false);
                                 continue;
                             }
                         };
@@ -203,15 +196,15 @@ impl Module<GtkBox> for NetworkManagerModule {
                 NetworkManagerUpdate::Device(idx, device) => {
                     tracing::debug!("NetworkManager device {idx} updated: {}", device.interface);
                     tracing::trace!("NetworkManager device {idx} updated: {device:#?}");
-                    if let Some(widget) = container.children().nth(idx) {
+                    if let Some(icon) = icons.get(idx) {
                         match self.get_profile_state(&device) {
                             Some(state) => {
                                 let tooltip = self.get_tooltip(&device);
-                                widget.set_tooltip_text(Some(&tooltip));
-                                manager.update(state, (widget, image_provider.clone()));
+                                icon.set_tooltip_text(Some(&tooltip));
+                                manager.update(state, icon.clone());
                             }
                             _ => {
-                                widget.set_visible(false);
+                                icon.set_visible(false);
                             }
                         };
                     } else {
