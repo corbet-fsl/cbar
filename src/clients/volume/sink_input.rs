@@ -21,13 +21,24 @@ pub struct SinkInput {
 
 impl From<&SinkInputInfo<'_>> for SinkInput {
     fn from(value: &SinkInputInfo) -> Self {
+        let mut name = value.name.as_ref().map(ToString::to_string);
+
+        if name.is_none()
+            || name.as_ref().is_some_and(|s| s.starts_with("audio stream"))
+            || name
+                .as_ref()
+                .is_some_and(|s| s.starts_with("Playback Stream"))
+        {
+            name = value
+                .proplist
+                .get_str("application.name")
+                .or_else(|| value.proplist.get_str("application.process.binary"))
+                .or_else(|| value.proplist.get_str("node.name"));
+        }
+
         Self {
             index: value.index,
-            name: value
-                .name
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_default(),
+            name: name.unwrap_or_else(|| format!("input {}", value.index)),
             muted: value.mute,
             volume: value.volume.into(),
             can_set_volume: value.has_volume && value.volume_writable,
