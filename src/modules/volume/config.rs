@@ -87,6 +87,12 @@ pub struct VolumeModule {
     /// **Default**: `null`
     pub(crate) truncate: Option<TruncateMode>,
 
+    // -- Common --
+    /// See [truncate options](module-level-options#truncate-mode).
+    ///
+    /// **Default**: `null`
+    pub(crate) truncate_popup: Option<TruncateMode>,
+
     /// See [marquee options](module-level-options#marquee-mode).
     #[serde(default)]
     pub(crate) marquee: MarqueeMode,
@@ -114,6 +120,7 @@ impl Default for VolumeModule {
             show_monitors: false,
             profiles: Profiles::default(),
             truncate: None,
+            truncate_popup: None,
             marquee: MarqueeMode::default(),
             layout: LayoutConfig::default(),
             common: Some(CommonConfig::default()),

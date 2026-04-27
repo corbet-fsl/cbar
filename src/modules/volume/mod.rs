@@ -100,7 +100,7 @@ impl ObjectSubclass for DropdownItemData {
 
 impl VolumeModule {
     fn overflow_label(&self, name: &str, css_class: &str) -> OverflowLabel {
-        let label = OverflowLabel::new(Label::new(None), self.truncate, self.marquee.clone());
+        let label = OverflowLabel::new(Label::new(None), self.truncate_popup, self.marquee.clone());
         label.label().add_css_class(css_class);
         label.set_label_escaped(name);
         label
@@ -365,6 +365,10 @@ impl Module<Button> for VolumeModule {
                         .replace("{percentage}", &event.state.to_string())
                         .replace("{name}", &desc);
                     button_label.set_label_escaped(&label);
+
+                    if let Some(truncate) = self.truncate {
+                        button_label.truncate(truncate);
+                    }
                 },
             )
         };
@@ -458,7 +462,6 @@ impl Module<Button> for VolumeModule {
                 .set_child(Some(&label));
         });
 
-        let truncate = self.truncate;
         factory.connect_bind(move |_, list_item| {
             let dropdown_item = list_item
                 .downcast_ref::<ListItem>()
@@ -475,7 +478,7 @@ impl Module<Button> for VolumeModule {
                 .expect("should be a `Label`.");
 
             label.set_label(&dropdown_item.value().to_string());
-            if let Some(truncate) = truncate {
+            if let Some(truncate) = self.truncate_popup {
                 label.truncate(truncate);
             }
         });

@@ -1,7 +1,9 @@
 Displays the current volume level.
 Clicking on the widget opens a volume mixer, which allows you to change the device output level,
 the default playback device, and control application volume levels individually.
-Use `truncate` or `marquee` options to control the display of application titles in the volume mixer.
+Use `truncate_popup` or `marquee` options to control the display of application titles in the volume mixer.
+Use `truncate_popup` option to control the display of sink and sources in the volume mixer.
+Use `truncate` option to control the display of the `format` in the bar.
 
 This requires PulseAudio to function (`pipewire-pulse` is supported).
 
@@ -35,7 +37,8 @@ pulseaudio uses to describe sources of audio:
 | `icons.muted`               | `string`                                             | `󰝟`                   | Yes      | Icon to show for muted outputs.                                                                                                                                                                               |
 | `icons.mic_volume`          | `string`                                             | ``                    | Yes      | Icon to show for high microphone volume levels.                                                                                                                                                               |
 | `icons.mic_muted`           | `string`                                             | ``                    | Yes      | Icon to show for muted microphone inputs.                                                                                                                                                                     |
-| `truncate`                  | `'start'` or `'middle'` or `'end'` or `off` or `Map` | `off`                  | No       | The location of the ellipses and where to truncate text from. Leave null to avoid truncating. Use the long-hand `Map` version if specifying a length. Takes precedence over `marquee` if both are configured. |
+| `truncate_popup`            | `'start'` or `'middle'` or `'end'` or `off` or `Map` | `off`                  | No       | The location of the ellipses and where to truncate text from. Leave null to avoid truncating. Use the long-hand `Map` version if specifying a length. Takes precedence over `marquee` if both are configured. This option applies to sources and sinks in the popup window.  See `truncate` for configuration options.|
+| `truncate`                  | `'start'` or `'middle'` or `'end'` or `off` or `Map` | `off`                  | No       | The location of the ellipses and where to truncate text from. Leave null to avoid truncating. Use the long-hand `Map` version if specifying a length. Takes precedence over `marquee` if both are configured. This option applies to `format` and `mute_format`.|
 | `truncate.mode`             | `'start'` or `'middle'` or `'end'` or `off`          | `off`                  | No       | The location of the ellipses and where to truncate text from. Leave null to avoid truncating.                                                                                                                 |
 | `truncate.length`           | `integer`                                            | `null`                 | No       | The fixed width (in chars) of the widget. Leave blank to let GTK automatically handle.                                                                                                                        |
 | `truncate.max_length`       | `integer`                                            | `null`                 | No       | The maximum number of characters before truncating. Leave blank to let GTK automatically handle.                                                                                                              |
@@ -62,7 +65,8 @@ Information on the profiles system can be found [here](profiles).
       "format": "{icon} {percentage}%",
       "sink_slider_orientation": "vertical",
       "max_volume": 100,
-      "truncate": "middle",
+      "truncate": "end",
+      "truncate_popup": "middle",
       "icons": {
         "volume": "󰕾",
         "muted": "󰝟"
@@ -97,7 +101,11 @@ type = "volume"
 format = "{icon} {percentage}%"
 sink_slider_orientation = "vertical"
 max_volume = 100
-truncate = "end"
+truncate_popup = "end"
+
+[end.truncate]
+mode = "end"
+max_length = 25
 
 [end.icons]
 volume = "󰕾"
@@ -128,6 +136,7 @@ end:
     sink_slider_orientation: vertical
     max_volume: 100
     truncate: end
+    truncate_popup: end
     icons:
       volume: 󰕾
       muted: 󰝟
@@ -156,6 +165,7 @@ end:
       sink_slider_orientation = "vertical"
       max_volume = 100
       truncate = "end"
+      truncate_popup = "end"
       icons.volume = "󰕾"
       icons.muted = "󰝟"
 
