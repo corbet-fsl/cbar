@@ -126,7 +126,7 @@ impl VolumeModule {
     where
         F: Fn(String) -> Update + 'static,
     {
-        selector.connect_selected_notify(move |selector| {
+        selector.connect_selected_item_notify(move |selector| {
             if let Some(item) = selector.selected_item().and_downcast_ref::<DropdownItem>() {
                 tx.send_spawn(func(item.key()));
             }
@@ -451,8 +451,13 @@ impl Module<Button> for VolumeModule {
         container.append(&device_container);
         container.append(&app_container);
 
+        let no_sink = DropdownItem::new("ironbar_no_sink", "No sink available");
+        let no_source = DropdownItem::new("ironbar_no_source", "No source available");
+
         let sink_options = gio::ListStore::new::<DropdownItem>();
+        sink_options.append(&no_sink);
         let source_options = gio::ListStore::new::<DropdownItem>();
+        source_options.append(&no_source);
         let factory = SignalListItemFactory::new();
         factory.connect_setup(move |_, list_item| {
             let label = Label::new(None);
@@ -589,7 +594,8 @@ impl Module<Button> for VolumeModule {
                         sink_options.append(&DropdownItem::new(&info.name, &info.description));
 
                         if info.active {
-                            sink_selector.set_selected(sinks.len() as u32);
+                            let offset = sink_options.find(&no_sink).is_some() as usize;
+                            sink_selector.set_selected((sinks.len() + offset) as u32);
                             sink_slider.set_value(info.volume.percent());
 
                             sink_manager
@@ -604,7 +610,8 @@ impl Module<Button> for VolumeModule {
                                 .append(&DropdownItem::new(&info.name, &info.description));
 
                             if info.active {
-                                source_selector.set_selected(sources.len() as u32);
+                                let offset = source_options.find(&no_source).is_some() as usize;
+                                source_selector.set_selected((sources.len() + offset) as u32);
                                 source_slider.set_value(info.volume.percent());
 
                                 source_manager.update(
@@ -618,11 +625,19 @@ impl Module<Button> for VolumeModule {
                     }
                     Event::UpdateSink(info) => {
                         if info.active
-                            && let Some(pos) = sinks.iter().position(|s| s.name == info.name)
+                            && let Some(pos) =
+                                sink_options.iter::<DropdownItem>().position(|s| match s {
+                                    Ok(s) => s.key() == info.name,
+                                    Err(_) => false,
+                                })
                         {
                             sink_selector.set_selected(pos as u32);
                             if !sink_slider.has_css_class("dragging") {
                                 sink_slider.set_value(info.volume.percent());
+                            }
+
+                            if let Some(pos) = sink_options.find(&no_sink) {
+                                sink_options.remove(pos);
                             }
 
                             sink_manager
@@ -631,12 +646,20 @@ impl Module<Button> for VolumeModule {
                     }
                     Event::UpdateSource(info) => {
                         if info.active
-                            && let Some(pos) = sources.iter().position(|s| s.name == info.name)
+                            && let Some(pos) =
+                                source_options.iter::<DropdownItem>().position(|s| match s {
+                                    Ok(s) => s.key() == info.name,
+                                    Err(_) => false,
+                                })
                             && (!info.monitor || show_monitors)
                         {
                             source_selector.set_selected(pos as u32);
                             if !source_slider.has_css_class("dragging") {
                                 source_slider.set_value(info.volume.percent());
+                            }
+
+                            if let Some(pos) = source_options.find(&no_source) {
+                                source_options.remove(pos);
                             }
 
                             source_manager
@@ -647,12 +670,20 @@ impl Module<Button> for VolumeModule {
                         if let Some(pos) = sinks.iter().position(|s| s.name == name) {
                             sink_options.remove(pos as u32);
                             sinks.remove(pos);
+
+                            if sinks.is_empty() {
+                                sink_options.append(&no_sink);
+                            }
                         }
                     }
                     Event::RemoveSource(name) => {
                         if let Some(pos) = sources.iter().position(|s| s.name == name) {
                             source_options.remove(pos as u32);
                             sources.remove(pos);
+
+                            if sources.is_empty() {
+                                source_options.append(&no_source);
+                            }
                         }
                     }
                     Event::AddInput(info) => {
