@@ -6,18 +6,17 @@ mod source_output;
 use crate::channels::SyncSenderExt;
 use crate::{APP_ID, arc_mut, lock, register_client, spawn_blocking};
 use libpulse_binding::callbacks::ListResult;
-use libpulse_binding::context::introspect::{Introspector, ServerInfo};
+use libpulse_binding::context::introspect::ServerInfo;
 use libpulse_binding::context::subscribe::{Facility, InterestMaskSet, Operation};
 use libpulse_binding::context::{Context, FlagSet, State};
-use libpulse_binding::mainloop::standard::{IterateResult, Mainloop};
+use libpulse_binding::mainloop::threaded::Mainloop;
 use libpulse_binding::proplist::Proplist;
 use libpulse_binding::volume::{ChannelVolumes, Volume};
 pub use sink::Sink;
 pub use sink_input::SinkInput;
 pub use source::Source;
 pub use source_output::SourceOutput;
-
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
@@ -129,14 +128,31 @@ pub enum Event {
     RemoveOutput(u32),
 }
 
+#[derive(Debug, Clone)]
+pub enum Request {
+    SinkVolume(String, VolumeLevels),
+    SinkMuted(String, bool),
+    SinkDefault(String),
+
+    SinkInputVolume(u32, VolumeLevels),
+    SinkInputMuted(u32, bool),
+
+    SourceVolume(String, VolumeLevels),
+    SourceMuted(String, bool),
+    SourceDefault(String),
+
+    SourceOutputVolume(u32, VolumeLevels),
+    SourceOutputMuted(u32, bool),
+}
+
 #[derive(Debug)]
 pub struct Client {
-    connection: Arc<Mutex<ConnectionState>>,
-
     data: Data,
 
     tx: broadcast::Sender<Event>,
     _rx: broadcast::Receiver<Event>,
+
+    req_tx: std::sync::mpsc::Sender<Request>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -150,41 +166,20 @@ struct Data {
     default_source_name: Arc<Mutex<Option<String>>>,
 }
 
-pub enum ConnectionState {
-    Disconnected,
-    Connected {
-        context: Arc<Mutex<Context>>,
-        introspector: Introspector,
-    },
-}
-
-impl Debug for ConnectionState {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Disconnected => "Disconnected",
-                Self::Connected { .. } => "Connected",
-            }
-        )
-    }
-}
-
 impl Client {
-    pub fn new() -> Self {
+    pub fn new(req_tx: std::sync::mpsc::Sender<Request>) -> Self {
         let (tx, rx) = broadcast::channel(32);
 
         Self {
-            connection: arc_mut!(ConnectionState::Disconnected),
             data: Data::default(),
             tx,
             _rx: rx,
+            req_tx,
         }
     }
 
     /// Starts the client.
-    fn run(&self) {
+    fn run(&self, rx: std::sync::mpsc::Receiver<Request>) {
         let Some(mut proplist) = Proplist::new() else {
             error!("Failed to create PA proplist");
             return;
@@ -199,45 +194,74 @@ impl Client {
             return;
         };
 
-        let Some(context) = Context::new_with_proplist(&mainloop, "Ironbar Context", &proplist)
-        else {
+        let Some(context) = Context::new_with_proplist(&mainloop, "Ironbar", &proplist) else {
             error!("Failed to create PA context");
             return;
         };
 
         let context = arc_mut!(context);
 
-        let state_callback = Box::new({
+        lock!(context).set_state_callback(Some(Box::new({
             let context = context.clone();
             let data = self.data.clone();
             let tx = self.tx.clone();
-
             move || on_state_change(&context, &data, &tx)
-        });
+        })));
 
-        lock!(context).set_state_callback(Some(state_callback));
+        if let Err(err) = mainloop.start() {
+            error!("Failed to start PA mainloop: {err:?}");
+            return;
+        }
 
+        mainloop.lock();
         if let Err(err) = lock!(context).connect(None, FlagSet::NOAUTOSPAWN, None) {
             error!("{err:?}");
+            mainloop.unlock();
+            mainloop.stop();
+            return;
         }
+        mainloop.unlock();
 
-        let introspector = lock!(context).introspect();
+        let mut introspector = lock!(context).introspect();
 
-        {
-            let mut inner = lock!(self.connection);
-            *inner = ConnectionState::Connected {
-                context,
-                introspector,
-            };
-        }
-
-        loop {
-            match mainloop.iterate(true) {
-                IterateResult::Success(_) => {}
-                IterateResult::Err(err) => error!("{err:?}"),
-                IterateResult::Quit(_) => break,
+        for req in rx {
+            mainloop.lock();
+            match req {
+                Request::SinkVolume(name, levels) => {
+                    introspector.set_sink_volume_by_name(&name, &levels.into(), None);
+                }
+                Request::SinkMuted(name, muted) => {
+                    introspector.set_sink_mute_by_name(&name, muted, None);
+                }
+                Request::SinkDefault(name) => {
+                    lock!(context).set_default_sink(&name, |_| {});
+                }
+                Request::SinkInputVolume(index, levels) => {
+                    introspector.set_sink_input_volume(index, &levels.into(), None);
+                }
+                Request::SinkInputMuted(index, muted) => {
+                    introspector.set_sink_input_mute(index, muted, None);
+                }
+                Request::SourceVolume(name, levels) => {
+                    introspector.set_source_volume_by_name(&name, &levels.into(), None);
+                }
+                Request::SourceMuted(name, muted) => {
+                    introspector.set_source_mute_by_name(&name, muted, None);
+                }
+                Request::SourceDefault(name) => {
+                    lock!(context).set_default_source(&name, |_| {});
+                }
+                Request::SourceOutputVolume(index, levels) => {
+                    introspector.set_source_output_volume(index, &levels.into(), None);
+                }
+                Request::SourceOutputMuted(index, muted) => {
+                    introspector.set_source_output_mute(index, muted, None);
+                }
             }
+            mainloop.unlock();
         }
+
+        mainloop.stop();
     }
 
     /// Gets an event receiver.
@@ -248,12 +272,14 @@ impl Client {
 
 /// Creates a new Pulse volume client.
 pub fn create_client() -> Arc<Client> {
-    let client = Arc::new(Client::new());
+    let (req_tx, req_rx) = std::sync::mpsc::channel();
+
+    let client = Arc::new(Client::new(req_tx));
 
     {
         let client = client.clone();
         spawn_blocking(move || {
-            client.run();
+            client.run(req_rx);
         });
     }
 
