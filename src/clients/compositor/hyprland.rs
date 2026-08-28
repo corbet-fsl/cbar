@@ -22,7 +22,7 @@ use tokio::sync::broadcast::{Receiver, Sender, channel};
 use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "workspaces")]
-use super::WorkspaceUpdate;
+use super::{WorkspaceTarget, WorkspaceUpdate};
 
 #[derive(Debug)]
 struct TxRx<T> {
@@ -416,17 +416,31 @@ impl Client {
 
 #[cfg(feature = "workspaces+hyprland")]
 impl super::WorkspaceClient for Client {
-    fn focus(&self, id: i64) {
+    fn focus(&self, target: WorkspaceTarget) {
+        let target = target.persistent_by_index(i64::from(i32::MAX));
         let res = if self.use_lua_dispatch {
-            let arg = format!("{{workspace=\"{id}\"}}");
+            let workspace = match &target {
+                WorkspaceTarget::Id(id) => id.to_string(),
+                WorkspaceTarget::Name(name) => name.replace('\\', "\\\\").replace('"', "\\\""),
+                WorkspaceTarget::Persistent { .. } => {
+                    unreachable!("persistent target was resolved")
+                }
+            };
+            let arg = format!("{{workspace=\"{workspace}\"}}");
             Dispatch::call(DispatchType::Custom("hl.dsp.focus", &arg))
         } else {
-            let identifier = WorkspaceIdentifierWithSpecial::Id(id as i32);
+            let identifier = match &target {
+                WorkspaceTarget::Id(id) => WorkspaceIdentifierWithSpecial::Id(*id as i32),
+                WorkspaceTarget::Name(name) => WorkspaceIdentifierWithSpecial::Name(name),
+                WorkspaceTarget::Persistent { .. } => {
+                    unreachable!("persistent target was resolved")
+                }
+            };
             Dispatch::call(DispatchType::Workspace(identifier))
         };
 
         if let Err(e) = res {
-            error!("Couldn't focus workspace '{id}': {e:#}");
+            error!("Couldn't focus workspace '{target:?}': {e:#}");
         }
     }
 
@@ -456,6 +470,35 @@ impl super::WorkspaceClient for Client {
         }
 
         rx
+    }
+}
+
+#[cfg(all(test, feature = "workspaces+hyprland"))]
+mod workspace_target_tests {
+    use super::WorkspaceTarget;
+
+    #[test]
+    fn numeric_persistent_favourite_preserves_hyprland_id_semantics() {
+        let target = WorkspaceTarget::Persistent {
+            name: "2".to_string(),
+            index: Some(2),
+        };
+        assert_eq!(
+            target.persistent_by_index(i64::from(i32::MAX)),
+            WorkspaceTarget::Id(2)
+        );
+    }
+
+    #[test]
+    fn out_of_range_persistent_favourite_preserves_exact_hyprland_name() {
+        let target = WorkspaceTarget::Persistent {
+            name: "2147483648".to_string(),
+            index: Some(i64::from(i32::MAX) + 1),
+        };
+        assert_eq!(
+            target.persistent_by_index(i64::from(i32::MAX)),
+            WorkspaceTarget::Name("2147483648".to_string())
+        );
     }
 }
 

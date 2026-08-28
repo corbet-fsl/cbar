@@ -1,0 +1,24 @@
+[package]
+name = "ironbar-launch-service"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Bounded, shell-free application handoff for Ironbar modules"
+readme = "README.md"
+repository = "https://github.com/jakestanger/ironbar"
+categories = ["gui"]
+keywords = ["launcher", "systemd", "desktop", "wayland"]
+
+[dependencies]
+futures-channel = "0.3.31"
+thiserror = "2.0.18"
+tracing = "0.1.44"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.4", default-features = false, features = ["std", "event", "process"] }
+
+[dev-dependencies]
+futures-executor = "0.3.31"

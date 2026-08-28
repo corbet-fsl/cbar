@@ -1,0 +1,11 @@
+position: top
+center:
+  - type: system_graph
+    network_actions:
+      wlan:
+        - network-ui
+        - "{category}"
+        - "{interface}"
+    network_secondary_actions:
+      wlan:
+        - network-editor

@@ -26,6 +26,27 @@ pub enum Command {
     /// Load stylesheets and dynamically add/remove classes
     #[command(subcommand)]
     Style(StyleCommand),
+
+    /// Control cbar's resident matrix launcher.
+    #[cfg(feature = "matrix_launcher")]
+    #[command(subcommand)]
+    Launcher(LauncherCommand),
+}
+
+#[cfg(feature = "matrix_launcher")]
+#[derive(Subcommand, Debug, Serialize, Deserialize)]
+#[serde(tag = "subcommand", rename_all = "snake_case")]
+pub enum LauncherCommand {
+    /// Map the cached launcher immediately and refresh providers in the background.
+    Show,
+    /// Hide the launcher without destroying its cached GTK tree.
+    Hide,
+    /// Toggle launcher visibility.
+    Toggle,
+    /// Ask every inventory provider to refresh independently.
+    Refresh,
+    /// Report whether the launcher is visible, resident, or unavailable.
+    Status,
 }
 
 #[derive(Subcommand, Debug, Serialize, Deserialize)]

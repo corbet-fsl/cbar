@@ -6,12 +6,18 @@ on:
     branches: [ "master" ]
     paths:
       - 'src/**/*'
+      - 'launch-service/**/*'
+      - 'launcher-core/**/*'
+      - 'launcher-gtk/**/*'
       - 'Cargo.*'
       - 'build.rs'
   pull_request:
     branches: [ "master" ]
     paths:
       - 'src/**/*'
+      - 'launch-service/**/*'
+      - 'launcher-core/**/*'
+      - 'launcher-gtk/**/*'
       - 'Cargo.*'
       - 'build.rs'
       - '.github/workflows/build.yml'
@@ -30,6 +36,8 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      - name: Check launch service formatting
+        run: cargo fmt --manifest-path launch-service/Cargo.toml --check
 
   clippy-base:
     runs-on: ubuntu-latest
@@ -61,6 +69,8 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features
 
+      - name: Clippy launch service
+        run: cargo clippy --manifest-path launch-service/Cargo.toml --all-targets
 
   build:
     name: 'Build & Test'
@@ -80,6 +90,46 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
+
+  launcher:
+    name: 'Launcher crates'
+    runs-on: ubuntu-latest
+    container: ghcr.io/jakestanger/ironbar-build:master
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        name: Cache dependencies
+
+      - name: Clippy
+        run: >-
+          cargo clippy -p ironbar-launch-service -p cbar-launcher-core
+          -p cbar-launcher --all-targets -- -D warnings
+
+      - name: Run tests
+        run: >-
+          cargo test -p ironbar-launch-service -p cbar-launcher-core
+          -p cbar-launcher --all-targets
+
+      - name: Verify launch service package
+        run: cargo package --manifest-path launch-service/Cargo.toml --allow-dirty
+
+      - name: Verify launcher core package
+        run: cargo package --manifest-path launcher-core/Cargo.toml --allow-dirty
+
+      - name: Verify launcher GTK package
+        run: >-
+          cargo package --manifest-path launcher-gtk/Cargo.toml --allow-dirty
+          --config "patch.crates-io.cbar-launcher-core.path='${GITHUB_WORKSPACE}/launcher-core'"
+          --config "patch.crates-io.ironbar-launch-service.path='${GITHUB_WORKSPACE}/launch-service'"
+
+      - name: Verify root package with staged launcher crates
+        run: >-
+          cargo package --allow-dirty
+          --config "patch.crates-io.cbar-launcher.path='${GITHUB_WORKSPACE}/launcher-gtk'"
+          --config "patch.crates-io.cbar-launcher-core.path='${GITHUB_WORKSPACE}/launcher-core'"
+          --config "patch.crates-io.ironbar-launch-service.path='${GITHUB_WORKSPACE}/launch-service'"
 
   feature-checks:
     name: 'Check feature flag'
@@ -114,6 +164,7 @@ jobs:
           - keyboard+hyprland
           - label
           - launcher
+          - matrix_launcher
           - menu
           - music+all
           - music+mpris
@@ -122,6 +173,7 @@ jobs:
           - notifications
           - sys_info
           - script
+          - system_graph
           - tray
           - volume
           - workspaces+all

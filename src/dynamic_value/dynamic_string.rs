@@ -220,6 +220,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ipc")]
     fn test_variable() {
         const INPUT: &str = "#variable";
         let (tokens, _) = parse_input(INPUT);
@@ -243,6 +244,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ipc")]
     fn test_static_variable() {
         const INPUT: &str = "hello #subject";
         let (tokens, _) = parse_input(INPUT);
@@ -268,6 +270,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ipc")]
     fn test_static_variable_static() {
         const INPUT: &str = "hello #subject foo";
         let (tokens, _) = parse_input(INPUT);
@@ -281,6 +284,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ipc")]
     fn test_static_script_variable() {
         const INPUT: &str = "hello {{echo world}} #foo";
         let (tokens, _) = parse_input(INPUT);
@@ -297,6 +301,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ipc")]
     fn test_escape_hash() {
         const INPUT: &str = "number ###num";
         let (tokens, _) = parse_input(INPUT);
@@ -321,6 +326,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ipc")]
     fn test_pango_attribute() {
         const INPUT: &str = "<span color='#color'>hello</span>";
         let (tokens, _) = parse_input(INPUT);

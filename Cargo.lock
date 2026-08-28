@@ -123,46 +123,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-io"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a2b323ccce0a1d90b449fd71f2a06ca7faa7c54c2751f06c9bd851fc061059"
-dependencies = [
- "async-lock",
- "cfg-if",
- "concurrent-queue",
- "futures-io",
- "futures-lite",
- "parking",
- "polling",
- "rustix 0.38.44",
- "slab",
- "tracing",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "async-lock"
-version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff6e472cdea888a4bd64f342f09b3f50e1886d32afe8df3d663c01140b811b18"
-dependencies = [
- "event-listener",
- "event-listener-strategy",
- "pin-project-lite",
-]
-
-[[package]]
-name = "async-pidfd"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "958321a23896f573a3f1809437af5816f3bc90dd2d5ffe8b1cd5645f42230c17"
-dependencies = [
- "async-io",
- "libc",
-]
-
-[[package]]
 name = "async-recursion"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -382,6 +342,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "cbar-launcher"
+version = "0.1.0"
+dependencies = [
+ "cbar-launcher-core",
+ "dirs",
+ "gtk4",
+ "gtk4-layer-shell",
+ "ironbar-launch-service",
+ "libc",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
+name = "cbar-launcher-core"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "nucleo-matcher",
+ "serde",
+ "serde_json",
+ "shlex 2.0.1",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.51"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -390,7 +378,7 @@ dependencies = [
  "find-msvc-tools",
  "jobserver",
  "libc",
- "shlex",
+ "shlex 1.3.0",
 ]
 
 [[package]]
@@ -1936,6 +1924,7 @@ name = "ironbar"
 version = "0.19.0"
 dependencies = [
  "bluer",
+ "cbar-launcher",
  "cfg-if",
  "chrono",
  "clap",
@@ -1951,6 +1940,7 @@ dependencies = [
  "gtk4-layer-shell",
  "hyprland",
  "indexmap",
+ "ironbar-launch-service",
  "libpulse-binding",
  "lua-src",
  "mlua",
@@ -1964,7 +1954,6 @@ dependencies = [
  "serde_json",
  "smithay-client-toolkit",
  "strip-ansi-escapes",
- "swayipc-async",
  "sysinfo",
  "system-tray",
  "thiserror 2.0.20",
@@ -1978,6 +1967,18 @@ dependencies = [
  "wayland-client",
  "wayland-protocols-wlr",
  "zbus",
+]
+
+[[package]]
+name = "ironbar-launch-service"
+version = "0.1.0"
+dependencies = [
+ "futures-channel",
+ "futures-executor",
+ "libc",
+ "rustix 1.1.4",
+ "thiserror 2.0.20",
+ "tracing",
 ]
 
 [[package]]
@@ -2404,6 +2405,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
  "windows-sys 0.61.1",
+]
+
+[[package]]
+name = "nucleo-matcher"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf33f538733d1a5a3494b836ba913207f14d9d4a1d3cd67030c5061bdd2cac85"
+dependencies = [
+ "memchr",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -3268,6 +3279,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
+name = "shlex"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
 name = "signal-hook-registry"
 version = "1.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3387,31 +3404,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "swayipc-async"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "806f344927009a79deb17bcf103abdc93492254165f651df2bb64e0d6b4bda67"
-dependencies = [
- "async-io",
- "async-pidfd",
- "futures-lite",
- "serde",
- "serde_json",
- "swayipc-types",
-]
-
-[[package]]
-name = "swayipc-types"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a29165dc67819a052bd67962b6c9de7c5d4461f0e8d224eb0f7cdd26cf05a650"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.20",
-]
 
 [[package]]
 name = "symlink"
@@ -3954,6 +3946,12 @@ name = "unicode-ident"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00e2473a93778eb0bad35909dff6a10d28e63f792f16ed15e404fca9d5eeedbe"
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "unicode-xid"

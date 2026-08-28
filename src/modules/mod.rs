@@ -60,6 +60,8 @@ pub mod notifications;
 pub mod script;
 #[cfg(feature = "sys_info")]
 pub mod sysinfo;
+#[cfg(feature = "system_graph")]
+pub mod system_graph;
 #[cfg(feature = "tray")]
 pub mod tray;
 #[cfg(feature = "volume")]

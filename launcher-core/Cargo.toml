@@ -1,0 +1,24 @@
+[package]
+name = "cbar-launcher-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Toolkit-independent model and configuration core for cbar's matrix launcher"
+readme = "README.md"
+repository = "https://github.com/jakestanger/ironbar"
+categories = ["gui"]
+keywords = ["launcher", "desktop", "wayland"]
+
+[lib]
+name = "cbar_launcher_core"
+path = "src/lib.rs"
+
+# NO TOOLKIT HERE, and the dependency list is the enforcement. `nucleo-matcher` is a matcher,
+# `shlex` is a POSIX splitter, serde is serialisation -- nothing that draws, nothing platform-bound.
+# A shell that needs something else brings it itself.
+[dependencies]
+libc = "0.2"
+nucleo-matcher = "0.3.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+shlex = "2.0.1"

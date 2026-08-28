@@ -57,7 +57,10 @@ impl Compositor {
     /// Attempts to get the current compositor.
     /// This is done by checking system env vars.
     fn get_current() -> Self {
-        if std::env::var("SWAYSOCK").is_ok() {
+        if ["SWAYSOCK", "I3SOCK"]
+            .into_iter()
+            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+        {
             cfg_if! {
                 if #[cfg(feature = "sway")] { Self::Sway }
                 else { tracing::error!("Not compiled with Sway support"); Self::Unsupported }
@@ -154,6 +157,39 @@ pub struct Workspace {
     pub visibility: Visibility,
 }
 
+/// Identifies a workspace to focus.
+///
+/// Open workspaces use their compositor-assigned ID. A persistent favourite
+/// retains both its configured name and, when numeric, its configured index so
+/// each compositor adapter can preserve its native creation semantics.
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg(feature = "workspaces")]
+pub enum WorkspaceTarget {
+    Id(i64),
+    Name(String),
+    Persistent { name: String, index: Option<i64> },
+}
+
+#[cfg(feature = "workspaces")]
+impl WorkspaceTarget {
+    pub(crate) fn persistent_by_name(&self) -> Self {
+        match self {
+            Self::Persistent { name, .. } => Self::Name(name.clone()),
+            target => target.clone(),
+        }
+    }
+
+    pub(crate) fn persistent_by_index(&self, max: i64) -> Self {
+        match self {
+            Self::Persistent {
+                index: Some(index), ..
+            } if *index > 0 && *index <= max => Self::Id(*index),
+            Self::Persistent { name, .. } => Self::Name(name.clone()),
+            target => target.clone(),
+        }
+    }
+}
+
 /// Indicates workspace visibility.
 /// Visible workspaces have a boolean flag to indicate if they are also focused.
 #[derive(Debug, Copy, Clone)]
@@ -194,6 +230,12 @@ pub enum WorkspaceUpdate {
     /// Provides an initial list of workspaces.
     /// This is re-sent to all subscribers when a new subscription is created.
     Init(Vec<Workspace>),
+    /// Replaces the current workspace state after a compositor reconnect.
+    ///
+    /// Unlike [`Self::Init`], this is intended for existing subscribers and
+    /// must reconcile workspaces that disappeared while the event stream was
+    /// unavailable.
+    Resync(Vec<Workspace>),
     Add(Workspace),
     Remove(i64),
     Move(Workspace),
@@ -232,8 +274,8 @@ pub struct BindModeUpdate {
 
 #[cfg(feature = "workspaces")]
 pub trait WorkspaceClient: Debug + Send + Sync {
-    /// Requests the workspace with this id is focused.
-    fn focus(&self, id: i64);
+    /// Requests the identified workspace is focused or created.
+    fn focus(&self, target: WorkspaceTarget);
 
     /// Creates a new to workspace event receiver.
     fn subscribe(&self) -> broadcast::Receiver<WorkspaceUpdate>;

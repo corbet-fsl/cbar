@@ -4,7 +4,7 @@ mod open_state;
 
 use self::button::Button;
 use crate::channels::{AsyncSenderExt, BroadcastReceiverExt};
-use crate::clients::compositor::{Workspace, WorkspaceClient, WorkspaceUpdate};
+use crate::clients::compositor::{Workspace, WorkspaceClient, WorkspaceTarget, WorkspaceUpdate};
 use crate::config::{CommonConfig, LayoutConfig, default};
 use crate::gtk_helpers::{IronbarGlibExt, IronbarGtkExt};
 use crate::modules::workspaces::button_map::{ButtonMap, Identifier};
@@ -15,7 +15,7 @@ use color_eyre::{Report, Result};
 use gtk::prelude::*;
 use serde::Deserialize;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
@@ -205,9 +205,50 @@ pub struct WorkspaceItemContext {
     name_map: HashMap<String, String>,
     icon_size: i32,
     image_provider: image::Provider,
-    tx: mpsc::Sender<i64>,
+    tx: mpsc::Sender<WorkspaceTarget>,
     format_named: String,
     format_unnamed: String,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum WorkspaceResyncAction {
+    RemoveOrdinary(i64),
+    CloseFavorite { name: String, id: i64 },
+}
+
+fn workspace_resync_actions<'a>(
+    bindings: impl IntoIterator<Item = (&'a Identifier, Option<i64>)>,
+    workspaces: &[Workspace],
+    favorites: &[String],
+) -> Vec<WorkspaceResyncAction> {
+    let names_by_id = workspaces
+        .iter()
+        .map(|workspace| (workspace.id, workspace.name.as_str()))
+        .collect::<HashMap<_, _>>();
+    let favorite_names = favorites.iter().map(String::as_str).collect::<HashSet<_>>();
+
+    bindings
+        .into_iter()
+        .filter_map(|(identifier, workspace_id)| match identifier {
+            Identifier::Id(id) => match names_by_id.get(id) {
+                Some(name) if !favorite_names.contains(*name) => None,
+                Some(_) | None => Some(WorkspaceResyncAction::RemoveOrdinary(*id)),
+            },
+            Identifier::Name(name) => workspace_id.and_then(|id| {
+                if names_by_id
+                    .get(&id)
+                    .is_some_and(|current| *current == name.as_str())
+                {
+                    None
+                } else {
+                    Some(WorkspaceResyncAction::CloseFavorite {
+                        name: name.clone(),
+                        id,
+                    })
+                }
+            }),
+        })
+        .collect()
 }
 
 impl WorkspaceItemContext {
@@ -277,7 +318,7 @@ fn reorder_workspaces(container: &gtk::Box, sort_order: SortOrder) {
 
 impl Module<gtk::Box> for WorkspacesModule {
     type SendMessage = WorkspaceUpdate;
-    type ReceiveMessage = i64;
+    type ReceiveMessage = WorkspaceTarget;
 
     module_impl!("workspaces");
 
@@ -307,8 +348,8 @@ impl Module<gtk::Box> for WorkspacesModule {
         spawn(async move {
             trace!("Setting up UI event handler");
 
-            while let Some(id) = rx.recv().await {
-                client.focus(id);
+            while let Some(target) = rx.recv().await {
+                client.focus(target);
             }
 
             Ok::<(), Report>(())
@@ -346,22 +387,14 @@ impl Module<gtk::Box> for WorkspacesModule {
         let favorites = Rc::new(favorites);
 
         for favorite in &*favorites {
-            // Ensure numbered favorites actually refer to their respective numbered workspaces
-            let (id, index) = match favorite.parse::<i64>() {
-                Ok(num) => (num, num),
+            let index = match favorite.parse::<i64>() {
+                Ok(num) => num,
                 Err(_err) => {
                     debug!("favorite name {favorite} failed to parse as i64");
-                    (-1, 0)
+                    0
                 }
             };
-            let btn = Button::new(
-                id,
-                index,
-                favorite,
-                info.output_name,
-                OpenState::Closed,
-                &item_context,
-            );
+            let btn = Button::new_favorite(index, favorite, info.output_name, &item_context);
 
             btn.button().set_tag("workspace_index", index);
             container.append(btn.button());
@@ -398,6 +431,7 @@ impl Module<gtk::Box> for WorkspacesModule {
                         let label = item_context.format_label(&workspace.name, workspace.index);
                         btn.set_label(&label);
                         btn.set_monitor(&workspace.monitor);
+                        btn.set_open_state(workspace.visibility.into());
                         btn.button().set_tag("workspace_index", workspace.index);
                     } else {
                         let btn = Button::new(
@@ -421,23 +455,15 @@ impl Module<gtk::Box> for WorkspacesModule {
 
             let remove_workspace = {
                 let container = container.clone();
-                let favorites = favorites.clone();
                 move |id: i64, button_map: &mut ButtonMap| {
-                    // Prevent what ends up effectively being permanently disabling favorite
-                    // workspace buttons
-                    if favorites.contains(&id.to_string()) {
-                        return;
-                    }
-                    // since other favourites use name identifiers,
-                    // we can safely remove using ID here and favourites will remain
+                    // Ordinary buttons are keyed by ID and disappear with their workspace.
                     if let Some(button) = button_map.remove(&Identifier::Id(id)) {
                         container.remove(button.button());
-                    } else {
-                        // otherwise we do a deep search and use the button's cached ID
-                        if let Some(button) = button_map.find_button_by_id_mut(id) {
-                            button.set_workspace_id(-1);
-                            button.set_open_state(OpenState::Closed);
-                        }
+                    // Favourites are keyed by name. Keep the button, detach the stale
+                    // compositor ID and restore its create-by-name click target.
+                    } else if let Some(button) = button_map.find_button_by_id_mut(id) {
+                        button.set_workspace_closed(id);
+                        button.set_open_state(OpenState::Closed);
                     }
                 }
             };
@@ -471,6 +497,45 @@ impl Module<gtk::Box> for WorkspacesModule {
                         reorder!();
 
                         has_initialized = true;
+                    }
+                    WorkspaceUpdate::Resync(workspaces) if has_initialized => {
+                        let workspaces = workspaces
+                            .into_iter()
+                            .filter(|workspace| {
+                                self.all_monitors || workspace.monitor == output_name
+                            })
+                            .filter(|workspace| !self.hidden.contains(&workspace.name))
+                            .collect::<Vec<_>>();
+                        let actions = workspace_resync_actions(
+                            button_map
+                                .iter()
+                                .map(|(identifier, button)| (identifier, button.workspace_id())),
+                            &workspaces,
+                            favorites.as_ref(),
+                        );
+
+                        for action in actions {
+                            match action {
+                                WorkspaceResyncAction::RemoveOrdinary(id) => {
+                                    if let Some(button) = button_map.remove(&Identifier::Id(id)) {
+                                        container.remove(button.button());
+                                    }
+                                }
+                                WorkspaceResyncAction::CloseFavorite { name, id } => {
+                                    if let Some(button) =
+                                        button_map.get_mut(&Identifier::Name(name))
+                                        && button.workspace_id() == Some(id)
+                                    {
+                                        button.set_workspace_closed(id);
+                                        button.set_open_state(OpenState::Closed);
+                                    }
+                                }
+                            }
+                        }
+                        for workspace in workspaces {
+                            add_workspace(workspace, &mut button_map);
+                        }
+                        reorder!();
                     }
                     WorkspaceUpdate::Add(workspace) if has_initialized => {
                         if !self.hidden.contains(&workspace.name)
@@ -568,13 +633,13 @@ fn new_state_for_button(
     if button.open_state() == OpenState::Closed {
         None
     } else if button.monitor() == new.monitor {
-        if button.workspace_id() == new.id {
+        if button.workspace_id() == Some(new.id) {
             Some(OpenState::Focused)
         } else {
             Some(OpenState::Hidden)
         }
     } else if let Some(old) = old
-        && old.id == button.workspace_id()
+        && Some(old.id) == button.workspace_id()
     {
         if new.monitor == old.monitor {
             Some(OpenState::Hidden)
@@ -589,6 +654,73 @@ fn new_state_for_button(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn workspace(id: i64, name: &str) -> Workspace {
+        Workspace {
+            id,
+            index: id,
+            name: name.to_string(),
+            monitor: "DP-1".to_string(),
+            visibility: crate::clients::compositor::Visibility::Hidden,
+        }
+    }
+
+    #[test]
+    fn resync_canonicalizes_workspace_ids_between_favorites_and_ordinary_buttons() {
+        let bindings = [
+            (Identifier::Name("old-favorite".to_string()), Some(10)),
+            (Identifier::Id(20), Some(20)),
+            (Identifier::Id(30), Some(30)),
+            (Identifier::Name("gone-favorite".to_string()), Some(40)),
+            (Identifier::Id(50), Some(50)),
+            (Identifier::Name("kept-favorite".to_string()), Some(60)),
+            // Existing duplicates from an earlier incomplete reconciliation
+            // are reduced to the canonical button for the snapshot name.
+            (Identifier::Name("duplicate-old".to_string()), Some(70)),
+            (Identifier::Id(70), Some(70)),
+            (Identifier::Name("duplicate-kept".to_string()), Some(80)),
+            (Identifier::Id(80), Some(80)),
+        ];
+        let workspaces = [
+            workspace(10, "ordinary-after-rename"),
+            workspace(20, "new-favorite"),
+            workspace(50, "ordinary-kept"),
+            workspace(60, "kept-favorite"),
+            workspace(70, "ordinary-duplicate-kept"),
+            workspace(80, "duplicate-kept"),
+        ];
+        let favorites = [
+            "old-favorite".to_string(),
+            "new-favorite".to_string(),
+            "gone-favorite".to_string(),
+            "kept-favorite".to_string(),
+            "duplicate-old".to_string(),
+            "duplicate-kept".to_string(),
+        ];
+
+        let actions = workspace_resync_actions(
+            bindings.iter().map(|(identifier, id)| (identifier, *id)),
+            &workspaces,
+            &favorites,
+        );
+
+        assert_eq!(actions.len(), 6);
+        assert!(actions.contains(&WorkspaceResyncAction::CloseFavorite {
+            name: "old-favorite".to_string(),
+            id: 10,
+        }));
+        assert!(actions.contains(&WorkspaceResyncAction::RemoveOrdinary(20)));
+        assert!(actions.contains(&WorkspaceResyncAction::RemoveOrdinary(30)));
+        assert!(actions.contains(&WorkspaceResyncAction::CloseFavorite {
+            name: "gone-favorite".to_string(),
+            id: 40,
+        }));
+        assert!(actions.contains(&WorkspaceResyncAction::CloseFavorite {
+            name: "duplicate-old".to_string(),
+            id: 70,
+        }));
+        assert!(actions.contains(&WorkspaceResyncAction::RemoveOrdinary(80)));
+    }
 
     #[test]
     fn test_format_deserialization() {

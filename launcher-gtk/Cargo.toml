@@ -1,0 +1,30 @@
+[package]
+name = "cbar-launcher"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Resident GTK4 matrix launcher integrated into cbar"
+readme = "README.md"
+repository = "https://github.com/jakestanger/ironbar"
+categories = ["gui"]
+keywords = ["launcher", "gtk", "desktop", "wayland"]
+
+[lib]
+name = "cbar_launcher"
+path = "src/lib.rs"
+
+[dependencies]
+cbar-launcher-core = { version = "0.1.0", path = "../launcher-core" }
+ironbar-launch-service = { version = "0.1.0", path = "../launch-service" }
+gtk4 = { version = "0.10.0", features = ["v4_12"] }
+gtk4-layer-shell = "0.6.3"
+libc = "0.2"
+dirs = "6.0.0"
+serde_json = "1.0.151"
+sha2 = "0.10.9"
+tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread", "time", "process", "sync", "io-util", "fs"] }
+tracing = "0.1.44"
+walkdir = "2.5.0"
+
+[dev-dependencies]
+tokio = { version = "1.50.0", features = ["test-util"] }

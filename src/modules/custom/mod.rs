@@ -11,6 +11,7 @@ use self::label::LabelWidget;
 use self::slider::SliderWidget;
 use crate::channels::AsyncSenderExt;
 use crate::config::{CommonConfig, ModuleConfig};
+use crate::module_impl;
 use crate::modules::custom::button::ButtonWidget;
 use crate::modules::custom::progress::ProgressWidget;
 use crate::modules::{
@@ -18,7 +19,6 @@ use crate::modules::{
     ModuleUpdateEvent, PopupButton, PopupModuleFactory, WidgetContext, add_events,
 };
 use crate::script::Script;
-use crate::{module_impl, spawn};
 use color_eyre::Result;
 use gtk::prelude::*;
 use gtk::{Button, Orientation};
@@ -184,6 +184,26 @@ pub struct ExecEvent {
     id: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BuiltinCommand {
+    TogglePopup,
+    OpenPopup,
+    ClosePopup,
+    #[cfg(feature = "matrix_launcher")]
+    ToggleLauncher,
+}
+
+fn builtin_command(command: &str) -> Option<BuiltinCommand> {
+    match command {
+        "popup:toggle" => Some(BuiltinCommand::TogglePopup),
+        "popup:open" => Some(BuiltinCommand::OpenPopup),
+        "popup:close" => Some(BuiltinCommand::ClosePopup),
+        #[cfg(feature = "matrix_launcher")]
+        "launcher:toggle" => Some(BuiltinCommand::ToggleLauncher),
+        _ => None,
+    }
+}
+
 impl Module<gtk::Box> for CustomModule {
     type SendMessage = ();
     type ReceiveMessage = ExecEvent;
@@ -197,7 +217,9 @@ impl Module<gtk::Box> for CustomModule {
         mut rx: mpsc::Receiver<Self::ReceiveMessage>,
     ) -> Result<()> {
         let tx = context.tx.clone();
-        spawn(async move {
+        #[cfg(feature = "matrix_launcher")]
+        let ironbar = context.ironbar.clone();
+        gtk::glib::spawn_future_local(async move {
             while let Some(event) = rx.recv().await {
                 if event.cmd.starts_with('!') {
                     let script = Script::from(&event.cmd[1..]);
@@ -206,15 +228,30 @@ impl Module<gtk::Box> for CustomModule {
 
                     let args = event.args.unwrap_or_default();
                     script.run_as_oneshot(Some(&args));
-                } else if event.cmd == "popup:toggle" {
-                    tx.send_expect(ModuleUpdateEvent::TogglePopup(event.id))
-                        .await;
-                } else if event.cmd == "popup:open" {
-                    tx.send_expect(ModuleUpdateEvent::OpenPopup(event.id)).await;
-                } else if event.cmd == "popup:close" {
-                    tx.send_expect(ModuleUpdateEvent::ClosePopup).await;
                 } else {
-                    error!("Received invalid command: '{}'", event.cmd);
+                    match builtin_command(&event.cmd) {
+                        Some(BuiltinCommand::TogglePopup) => {
+                            tx.send_expect(ModuleUpdateEvent::TogglePopup(event.id))
+                                .await;
+                        }
+                        Some(BuiltinCommand::OpenPopup) => {
+                            tx.send_expect(ModuleUpdateEvent::OpenPopup(event.id)).await;
+                        }
+                        Some(BuiltinCommand::ClosePopup) => {
+                            tx.send_expect(ModuleUpdateEvent::ClosePopup).await;
+                        }
+                        #[cfg(feature = "matrix_launcher")]
+                        Some(BuiltinCommand::ToggleLauncher) => {
+                            let result = ironbar
+                                .matrix_launcher()
+                                .ok_or_else(|| "launcher is not initialized".to_string())
+                                .and_then(|launcher| launcher.toggle());
+                            if let Err(error) = result {
+                                error!("Failed to toggle launcher: {error}");
+                            }
+                        }
+                        None => error!("Received invalid command: '{}'", event.cmd),
+                    }
                 }
             }
         });
@@ -305,5 +342,44 @@ impl Module<gtk::Box> for CustomModule {
         }
 
         Some(container)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BuiltinCommand, builtin_command};
+
+    #[test]
+    fn builtin_controller_commands_are_exact_and_preserve_popup_actions() {
+        assert_eq!(
+            builtin_command("popup:toggle"),
+            Some(BuiltinCommand::TogglePopup)
+        );
+        assert_eq!(
+            builtin_command("popup:open"),
+            Some(BuiltinCommand::OpenPopup)
+        );
+        assert_eq!(
+            builtin_command("popup:close"),
+            Some(BuiltinCommand::ClosePopup)
+        );
+
+        #[cfg(feature = "matrix_launcher")]
+        assert_eq!(
+            builtin_command("launcher:toggle"),
+            Some(BuiltinCommand::ToggleLauncher)
+        );
+        #[cfg(not(feature = "matrix_launcher"))]
+        assert_eq!(builtin_command("launcher:toggle"), None);
+
+        for invalid in [
+            "launcher:show",
+            "launcher:toggle ",
+            "Launcher:toggle",
+            "popup:toggle ",
+            "not-a-command",
+        ] {
+            assert_eq!(builtin_command(invalid), None, "{invalid}");
+        }
     }
 }

@@ -41,7 +41,7 @@ impl ButtonMap {
     /// with the associated workspace ID.
     pub fn find_button_by_id(&self, id: i64) -> Option<&Button> {
         self.map.iter().find_map(|(_, button)| {
-            if button.workspace_id() == id {
+            if button.workspace_id() == Some(id) {
                 Some(button)
             } else {
                 None
@@ -54,7 +54,7 @@ impl ButtonMap {
     /// with the associated workspace ID.
     pub fn find_button_by_id_mut(&mut self, id: i64) -> Option<&mut Button> {
         self.map.iter_mut().find_map(|(_, button)| {
-            if button.workspace_id() == id {
+            if button.workspace_id() == Some(id) {
                 Some(button)
             } else {
                 None

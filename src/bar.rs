@@ -6,10 +6,35 @@ use gtk::gdk::Monitor;
 use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow, CenterBox, EventControllerMotion, Orientation, Window};
 use gtk_layer_shell::LayerShell;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{debug, error, info};
+
+fn layout_tracing_on() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("CBAR_LAYOUT_TRACE").is_some())
+}
+
+fn size_fields(widget: &impl IsA<gtk::Widget>) -> String {
+    format!("0,0,{},{}", widget.width(), widget.height())
+}
+
+fn bounds_fields(widget: &impl IsA<gtk::Widget>, target: &impl IsA<gtk::Widget>) -> String {
+    widget.compute_bounds(target).map_or_else(
+        || "0,0,0,0".to_string(),
+        |bounds| {
+            format!(
+                "{},{},{},{}",
+                bounds.x().round() as i32,
+                bounds.y().round() as i32,
+                bounds.width().round() as i32,
+                bounds.height().round() as i32
+            )
+        },
+    )
+}
 
 #[derive(Debug, Clone)]
 enum Inner {
@@ -148,6 +173,8 @@ impl Bar {
         let instance = Rc::new(self.clone());
         let load_result = self.load_modules(&instance, config, monitor);
 
+        self.install_layout_trace();
+
         let autohide_state = if let Some(autohide) = autohide {
             let hotspot_window = Window::new();
             self.setup_autohide(
@@ -187,6 +214,45 @@ impl Bar {
         };
 
         self
+    }
+
+    /// Emit one allocation snapshot after every map when the headless integration check asks for
+    /// it. GTK layer surfaces are absent from compositor window trees, so their physical layout is
+    /// otherwise not observable without a screenshot. The trace is disabled by default and does
+    /// not install a frame callback in ordinary sessions.
+    fn install_layout_trace(&self) {
+        if !layout_tracing_on() {
+            return;
+        }
+
+        let name = self.name.clone();
+        let content = self.content.clone();
+        let start = self.start.clone();
+        let center = self.center.clone();
+        let end = self.end.clone();
+        self.window.connect_map(move |window| {
+            let name = name.clone();
+            let content = content.clone();
+            let start = start.clone();
+            let center = center.clone();
+            let end = end.clone();
+            let frames = Cell::new(0u8);
+            window.add_tick_callback(move |_, _| {
+                let frame = frames.get().saturating_add(1);
+                frames.set(frame);
+                if (content.width() <= 0 || center.width() <= 0) && frame < 60 {
+                    return glib::ControlFlow::Continue;
+                }
+                eprintln!(
+                    "cbar-layout-trace name={name} bar={} start={} center={} end={}",
+                    size_fields(&content),
+                    bounds_fields(&start, &content),
+                    bounds_fields(&center, &content),
+                    bounds_fields(&end, &content)
+                );
+                glib::ControlFlow::Break
+            });
+        });
     }
 
     /// Closes the bar, consuming it.

@@ -1,6 +1,7 @@
 use crate::channels::{AsyncSenderExt, BroadcastReceiverExt};
 use crate::clients::lua::LuaEngine;
 use crate::config::{CommonConfig, ConfigLocation};
+use crate::file_watch;
 use crate::modules::{Module, ModuleInfo, ModuleParts, WidgetContext};
 use crate::{module_impl, rc_mut, spawn};
 use glib::translate::ToGlibPtr;
@@ -8,14 +9,11 @@ use gtk::DrawingArea;
 use gtk::cairo::{Format, ImageSurface};
 use gtk::prelude::*;
 use mlua::{Error, Function, LightUserData, MetaMethod, Value};
-use notify::event::ModifyKind;
-use notify::{Event, EventKind, RecursiveMode, Watcher, recommended_watcher};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
-use tokio::time::sleep;
-use tracing::{debug, error};
+use tracing::{error, warn};
 
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "extras", derive(schemars::JsonSchema))]
@@ -132,31 +130,13 @@ impl Module<gtk::Box> for CairoModule {
 
         let tx = context.tx.clone();
         spawn(async move {
-            let parent = path.parent().expect("to have parent path");
-
-            let mut watcher = recommended_watcher({
-                let path = path.clone();
-                move |res: notify::Result<Event>| match res {
-                    Ok(event) if matches!(event.kind, EventKind::Modify(ModifyKind::Data(_))) => {
-                        debug!("{event:?}");
-
-                        if event.paths.first().is_some_and(|p| p == &path) {
-                            tx.send_update_spawn(());
-                        }
+            match file_watch::subscribe(&path).await {
+                Ok(mut changes) => {
+                    while changes.recv().await.is_some() {
+                        tx.send_update(()).await;
                     }
-                    Err(e) => error!("Error occurred when watching stylesheet: {:?}", e),
-                    _ => {}
                 }
-            })
-            .expect("Failed to create lua file watcher");
-
-            watcher
-                .watch(parent, RecursiveMode::NonRecursive)
-                .expect("Failed to start lua file watcher");
-
-            // avoid watcher from dropping
-            loop {
-                sleep(Duration::from_secs(1)).await;
+                Err(err) => warn!("Lua hot reload unavailable for '{}': {err}", path.display()),
             }
         });
 

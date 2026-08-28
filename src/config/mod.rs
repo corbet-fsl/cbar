@@ -44,6 +44,8 @@ use crate::modules::notifications::NotificationsModule;
 use crate::modules::script::ScriptModule;
 #[cfg(feature = "sys_info")]
 use crate::modules::sysinfo::SysInfoModule;
+#[cfg(feature = "system_graph")]
+use crate::modules::system_graph::SystemGraphModule;
 #[cfg(feature = "tray")]
 use crate::modules::tray::TrayModule;
 #[cfg(feature = "volume")]
@@ -150,6 +152,8 @@ pub enum ModuleConfig {
     Notifications(Box<NotificationsModule>),
     #[cfg(feature = "script")]
     Script(Box<ScriptModule>),
+    #[cfg(feature = "system_graph")]
+    SystemGraph(Box<SystemGraphModule>),
     #[cfg(feature = "sys_info")]
     SysInfo(Box<SysInfoModule>),
     #[cfg(feature = "tray")]
@@ -210,6 +214,8 @@ impl ModuleConfig {
             Self::Notifications(module) => create!(module),
             #[cfg(feature = "script")]
             Self::Script(module) => create!(module),
+            #[cfg(feature = "system_graph")]
+            Self::SystemGraph(module) => create!(module),
             #[cfg(feature = "sys_info")]
             Self::SysInfo(module) => create!(module),
             #[cfg(feature = "tray")]
@@ -257,6 +263,8 @@ impl ModuleConfig {
             ModuleConfig::Notifications(_) => "Notifications",
             #[cfg(feature = "script")]
             ModuleConfig::Script(_) => "Script",
+            #[cfg(feature = "system_graph")]
+            ModuleConfig::SystemGraph(_) => "SystemGraph",
             #[cfg(feature = "sys_info")]
             ModuleConfig::SysInfo(_) => "SysInfo",
             #[cfg(feature = "tray")]

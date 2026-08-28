@@ -21,6 +21,8 @@ use smithay_client_toolkit::output::OutputInfo;
 use tokio::runtime::Runtime;
 use tokio::sync::oneshot::Sender;
 use tokio::task::{JoinHandle, block_in_place};
+#[cfg(feature = "ipc")]
+use tracing::warn;
 use tracing::{debug, error, info};
 
 use crate::bar::{Bar, create_bar};
@@ -43,6 +45,7 @@ mod config;
 mod desktop_file;
 mod dynamic_value;
 mod error;
+mod file_watch;
 mod gtk_helpers;
 mod image;
 #[cfg(feature = "ipc")]
@@ -51,6 +54,8 @@ mod ipc;
 mod ironvar;
 mod logging;
 mod macros;
+#[cfg(feature = "matrix_launcher")]
+mod matrix_launcher;
 mod modules;
 mod popup;
 mod script;
@@ -109,7 +114,10 @@ fn run_with_args() {
 
             let rt = create_runtime();
             rt.block_on(async move {
-                let ipc = ipc::Ipc::new();
+                let ipc = ipc::Ipc::new().unwrap_or_else(|err| {
+                    error!("{err:#}");
+                    exit(ExitCode::IpcResponseError as i32)
+                });
                 match ipc.send(command, args.debug).await {
                     Ok(res) => {
                         if args.debug {
@@ -157,6 +165,8 @@ pub struct Ironbar {
     scripts: Rc<RefCell<HashMap<String, Sender<()>>>>,
     desktop_files: DesktopFiles,
     image_provider: image::Provider,
+    #[cfg(feature = "matrix_launcher")]
+    matrix_launcher: RefCell<Option<matrix_launcher::Launcher>>,
 }
 
 impl Ironbar {
@@ -185,6 +195,8 @@ impl Ironbar {
             scripts: rc_mut!(HashMap::new()),
             desktop_files,
             image_provider,
+            #[cfg(feature = "matrix_launcher")]
+            matrix_launcher: RefCell::new(None),
         }
     }
 
@@ -221,17 +233,30 @@ impl Ironbar {
 
             running.store(true, Ordering::Relaxed);
 
-            cfg_if! {
-                if #[cfg(feature = "ipc")] {
-                    let ipc = ipc::Ipc::new();
+            #[cfg(feature = "matrix_launcher")]
+            instance
+                .matrix_launcher
+                .replace(Some(matrix_launcher::Launcher::new(app)));
+
+            #[cfg(feature = "ipc")]
+            let ipc_path = match ipc::Ipc::new() {
+                Ok(ipc) => {
+                    let path = ipc.path().to_path_buf();
                     ipc.start(app, instance.clone());
+                    Some(path)
                 }
-            }
+                Err(err) => {
+                    // IPC is optional control-plane functionality. A session without a secure
+                    // runtime directory must still be able to display the bar; silently falling
+                    // back to a shared temporary directory would trade compatibility for an
+                    // unsafe socket instead.
+                    warn!("IPC unavailable; continuing without it: {err:#}");
+                    None
+                }
+            };
 
             load_css(&css_source);
 
-            #[cfg(feature = "ipc")]
-            let ipc_path = ipc.path().to_path_buf();
             spawn(async move {
                 tokio::signal::ctrl_c()
                     .await
@@ -240,7 +265,9 @@ impl Ironbar {
                 info!("Shutting down");
 
                 #[cfg(feature = "ipc")]
-                ipc::Ipc::shutdown(ipc_path);
+                if let Some(ipc_path) = ipc_path {
+                    ipc::Ipc::shutdown(ipc_path);
+                }
 
                 exit(0);
             });
@@ -268,6 +295,11 @@ impl Ironbar {
                         error!("{:?}", report);
                         exit(ExitCode::CreateBars as i32);
                     }
+                }
+
+                #[cfg(feature = "matrix_launcher")]
+                if let Some(launcher) = instance.matrix_launcher() {
+                    glib::idle_add_local_once(move || launcher.warm());
                 }
 
                 let outputs = instance.clients.borrow_mut().outputs();
@@ -339,6 +371,12 @@ impl Ironbar {
     #[must_use]
     pub fn image_provider(&self) -> image::Provider {
         self.image_provider.clone()
+    }
+
+    #[cfg(feature = "matrix_launcher")]
+    #[must_use]
+    pub fn matrix_launcher(&self) -> Option<matrix_launcher::Launcher> {
+        self.matrix_launcher.borrow().clone()
     }
 
     /// Gets clones of bars by their name.
