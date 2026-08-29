@@ -43,7 +43,7 @@ command_exists "${COMPOSITOR_ARGV[0]}" || {
     printf 'no compositor: %s\n' "${COMPOSITOR_ARGV[0]}" >&2
     exit 2
 }
-for dependency in bash date dbus-run-session ps python3 setsid; do
+for dependency in bash date dbus-daemon dbus-run-session ps python3 readlink setsid; do
     command_exists "$dependency" || { printf 'missing dependency: %s\n' "$dependency" >&2; exit 2; }
 done
 
@@ -164,10 +164,31 @@ else
     done
 fi
 
-DBUS=(dbus-run-session)
+dbus_daemon=$(command -v dbus-daemon)
+dbus_run_session=$(command -v dbus-run-session)
+DBUS=("$dbus_run_session" "--dbus-daemon=$dbus_daemon")
+
+# Do not rely on dbus-daemon's compiled sysconfdir. In a Nix shell the selected daemon lives in
+# the store, while its default may still point at /etc/dbus-1/session.conf on the Ubuntu runner.
+# Resolve the configuration beside the selected daemon/run-session package instead.
 if [[ -n ${DBUS_SESSION_CONF:-} ]]; then
-    DBUS+=(--config-file="$DBUS_SESSION_CONF")
+    dbus_session_conf=$DBUS_SESSION_CONF
+else
+    dbus_session_conf=
+    for dbus_program in "$dbus_daemon" "$dbus_run_session"; do
+        dbus_prefix=$(dirname "$(dirname "$(readlink -f "$dbus_program")")")
+        candidate=$dbus_prefix/share/dbus-1/session.conf
+        if [[ -r $candidate ]]; then
+            dbus_session_conf=$candidate
+            break
+        fi
+    done
 fi
+if [[ ! -r $dbus_session_conf ]]; then
+    printf 'no readable D-Bus session configuration for %s\n' "$dbus_daemon" >&2
+    exit 2
+fi
+DBUS+=("--config-file=$dbus_session_conf")
 
 if ! "${DBUS[@]}" -- bash -s -- \
     "$RIG" "$CBAR" "$INPUT_DRIVER" "${COMPOSITOR_ARGV[@]}" \

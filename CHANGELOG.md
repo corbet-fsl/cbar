@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [cbar 0.1.0]
 
+- Establish FSL-1.1-ALv2 as cbar's product license, with Apache-2.0 becoming
+  available automatically after two years per version while inherited Ironbar
+  and nixlaunch code retains its MIT notices.
 - Establish the standalone `cbar` binary, service, configuration, IPC, and
   application identity without legacy aliases.
 - Integrate the resident matrix launcher and native responsive Cairo system

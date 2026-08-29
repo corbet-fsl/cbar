@@ -1,9 +1,15 @@
-This distribution contains software derived from Ironbar.
+Cbar contributions are provided under FSL-1.1-ALv2; see LICENSE. Each version
+automatically becomes available under Apache-2.0 two years after it is made
+available.
+
+This includes the cbar-launch-service crate, which was developed for cbar.
+
+This distribution also contains software derived from Ironbar.
 
 Ironbar
 Copyright (c) 2022 Jake Stanger
 Source base: 5b96bcffac54dd82347badcc07f79d58efa715c7
-License: MIT; see LICENSE.
+License: MIT; see LICENSES/IRONBAR-MIT.txt.
 
 The embedded matrix launcher core and GTK implementation were incorporated
 from nixlaunch at commit 8168771811a225448d682113379f91ef1373e7ae.
@@ -12,5 +18,5 @@ nixlaunch
 Copyright (c) 2026 nixlaunch contributors
 License: MIT; see launcher-core/LICENSE and launcher-gtk/LICENSE.
 
-Subsequent fork contributions are provided under the repository's MIT license
-unless a file states otherwise.
+The inherited MIT grants remain in effect for those source components. They do
+not change cbar's FSL-1.1-ALv2 product license.

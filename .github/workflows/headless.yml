@@ -1,0 +1,40 @@
+name: Headless smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  real-scroll:
+    name: 'Real Scroll layer smoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@19effe9fe722874e6d46dd7182e4b8b7a43c4a99 # v31.10.0
+        with:
+          extra_nix_config: accept-flake-config = false
+
+      - name: Build release cbar and exercise real Scroll
+        run: |
+          nix develop --command \
+            nix shell --inputs-from . \
+              nixpkgs#bash nixpkgs#coreutils nixpkgs#dbus nixpkgs#gnugrep \
+              nixpkgs#procps nixpkgs#python3 nixpkgs#util-linux nixpkgs#wtype \
+              github:julian-corbet/nixscroll-corbet-ch/d875e6544b93fcea9f03d59cba4afbfebf11fde4#scroll \
+              --command bash -euo pipefail -c \
+                'cargo build --release --all-features --locked --bin cbar
+                 checks/headless-session.sh target/release/cbar wtype -- scroll -c "$1"' \
+                -- '{config}'
+        env:
+          GSK_RENDERER: cairo

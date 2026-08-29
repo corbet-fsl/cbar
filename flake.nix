@@ -18,7 +18,15 @@
       forAllSystems =
         function:
         nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed (
-          system: function nixpkgs.legacyPackages.${system}
+          system:
+          function (import nixpkgs {
+            inherit system;
+            # FSL is source-available but not OSI-free. Keep the exception
+            # scoped to cbar so consumers can build this flake without a
+            # global unfree policy.
+            config.allowUnfreePredicate =
+              pkg: nixpkgs.lib.hasPrefix "cbar" (nixpkgs.lib.getName pkg);
+          })
         );
     in
     {

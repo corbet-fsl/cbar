@@ -72,8 +72,12 @@ for ownership and failure boundaries.
 
 ## Upstream and license
 
-Cbar is MIT licensed. The fork started from Ironbar commit
+Cbar is licensed under
+[FSL-1.1-ALv2](https://fsl.software/FSL-1.1-ALv2.template.md). Each version
+automatically becomes available under Apache-2.0 two years after it is made
+available. The fork started from Ironbar commit
 `5b96bcffac54dd82347badcc07f79d58efa715c7`; the integrated launcher came from
-nixlaunch commit `8168771811a225448d682113379f91ef1373e7ae`. Exact provenance
-and the upstream update policy are recorded in [UPSTREAM.md](UPSTREAM.md) and
-[NOTICE](NOTICE).
+nixlaunch commit `8168771811a225448d682113379f91ef1373e7ae`. Those inherited
+components retain their MIT grants and notices. Exact provenance and the
+upstream update policy are recorded in [UPSTREAM.md](UPSTREAM.md),
+[NOTICE](NOTICE), and [LICENSES](LICENSES/).

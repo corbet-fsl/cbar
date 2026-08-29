@@ -141,6 +141,8 @@ in
         --zsh target/completions/_cbar
 
       install -Dm644 LICENSE "$out/share/licenses/cbar/LICENSE"
+      install -Dm644 LICENSES/IRONBAR-MIT.txt \
+        "$out/share/licenses/cbar/LICENSE.ironbar"
       install -Dm644 launcher-core/LICENSE \
         "$out/share/licenses/cbar/LICENSE.nixlaunch"
       install -Dm644 NOTICE "$out/share/doc/cbar/NOTICE"
@@ -149,7 +151,14 @@ in
     meta = {
       homepage = "https://github.com/corbet-labs/cbar";
       description = "Opinionated GTK4 desktop panel with an integrated launcher.";
-      license = lib.licenses.mit;
+      # FSL-1.1-ALv2 has no identifier in nixpkgs' license set. It is
+      # source-available and converts to Apache-2.0 two years per release.
+      license = {
+        fullName = "Functional Source License, Version 1.1, ALv2 Future License";
+        url = "https://fsl.software/FSL-1.1-ALv2.template.md";
+        free = false;
+        redistributable = true;
+      };
       platforms = lib.platforms.linux;
       mainProgram = "cbar";
     };
