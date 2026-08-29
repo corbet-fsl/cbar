@@ -231,7 +231,7 @@ schemars = { version = "1.2.1", optional = true, features = ["indexmap2"] }
 clap_complete = {  version = "4.6.5", optional = true }
 
 [build-dependencies]
-vergen-git2 = "9.1.0"
+vergen-git2 = "10.0.3"
 
 [dev-dependencies]
 # Workspace adapter tests parse representative compositor payloads even when
