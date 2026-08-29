@@ -342,14 +342,76 @@ dependencies = [
 ]
 
 [[package]]
+name = "cbar"
+version = "0.1.0"
+dependencies = [
+ "bluer",
+ "cbar-launch-service",
+ "cbar-launcher",
+ "cfg-if",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "color-eyre",
+ "colpetto",
+ "config",
+ "dirs",
+ "evdev-rs",
+ "futures-lite",
+ "glib",
+ "gtk4",
+ "gtk4-layer-shell",
+ "hyprland",
+ "indexmap",
+ "libpulse-binding",
+ "lua-src",
+ "mlua",
+ "mpd-utils",
+ "mpris",
+ "notify",
+ "reqwest",
+ "rustix 1.1.4",
+ "schemars",
+ "serde",
+ "serde_json",
+ "smithay-client-toolkit",
+ "strip-ansi-escapes",
+ "sysinfo",
+ "system-tray",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-error",
+ "tracing-subscriber",
+ "vergen-git2",
+ "walkdir",
+ "wayland-client",
+ "wayland-protocols-wlr",
+ "zbus",
+]
+
+[[package]]
+name = "cbar-launch-service"
+version = "0.1.0"
+dependencies = [
+ "futures-channel",
+ "futures-executor",
+ "libc",
+ "rustix 1.1.4",
+ "thiserror 2.0.20",
+ "tracing",
+]
+
+[[package]]
 name = "cbar-launcher"
 version = "0.1.0"
 dependencies = [
+ "cbar-launch-service",
  "cbar-launcher-core",
  "dirs",
  "gtk4",
  "gtk4-layer-shell",
- "cbar-launch-service",
  "libc",
  "serde_json",
  "sha2",
@@ -1917,68 +1979,6 @@ checksum = "dbc5ebe9c3a1a7a5127f920a418f7585e9e758e911d0466ed004f393b0e380b2"
 dependencies = [
  "memchr",
  "serde",
-]
-
-[[package]]
-name = "cbar"
-version = "0.1.0"
-dependencies = [
- "bluer",
- "cbar-launcher",
- "cfg-if",
- "chrono",
- "clap",
- "clap_complete",
- "color-eyre",
- "colpetto",
- "config",
- "dirs",
- "evdev-rs",
- "futures-lite",
- "glib",
- "gtk4",
- "gtk4-layer-shell",
- "hyprland",
- "indexmap",
- "cbar-launch-service",
- "libpulse-binding",
- "lua-src",
- "mlua",
- "mpd-utils",
- "mpris",
- "notify",
- "reqwest",
- "rustix 1.1.4",
- "schemars",
- "serde",
- "serde_json",
- "smithay-client-toolkit",
- "strip-ansi-escapes",
- "sysinfo",
- "system-tray",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-error",
- "tracing-subscriber",
- "vergen-git2",
- "walkdir",
- "wayland-client",
- "wayland-protocols-wlr",
- "zbus",
-]
-
-[[package]]
-name = "cbar-launch-service"
-version = "0.1.0"
-dependencies = [
- "futures-channel",
- "futures-executor",
- "libc",
- "rustix 1.1.4",
- "thiserror 2.0.20",
- "tracing",
 ]
 
 [[package]]
@@ -4195,9 +4195,9 @@ dependencies = [
 
 [[package]]
 name = "wayland-client"
-version = "0.31.14"
+version = "0.31.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "645c7c96bb74690c3189b5c9cb4ca1627062bb23693a4fad9d8c3de958260144"
+checksum = "e3c36a0f861ad76d0901f2800b46321410d9f73f2ea88aac0650d86c32688073"
 dependencies = [
  "bitflags 2.9.1",
  "rustix 1.1.4",
