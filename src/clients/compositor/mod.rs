@@ -1,5 +1,6 @@
 use crate::register_fallible_client;
 use cfg_if::cfg_if;
+use std::ffi::OsString;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use thiserror::Error;
@@ -25,9 +26,14 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Compositor {
     #[cfg(feature = "sway")]
+    Scroll,
+    #[cfg(feature = "sway")]
     Sway,
+    #[cfg(feature = "sway")]
+    I3,
     #[cfg(feature = "hyprland")]
     Hyprland,
     #[cfg(feature = "niri")]
@@ -42,7 +48,11 @@ impl Display for Compositor {
             "{}",
             match self {
                 #[cfg(any(feature = "sway"))]
+                Self::Scroll => "Scroll",
+                #[cfg(any(feature = "sway"))]
                 Self::Sway => "Sway",
+                #[cfg(feature = "sway")]
+                Self::I3 => "i3",
                 #[cfg(any(feature = "hyprland"))]
                 Self::Hyprland => "Hyprland",
                 #[cfg(feature = "workspaces+niri")]
@@ -56,14 +66,24 @@ impl Display for Compositor {
 impl Compositor {
     /// Attempts to get the current compositor.
     /// This is done by checking system env vars.
-    fn get_current() -> Self {
-        if ["SWAYSOCK", "I3SOCK"]
-            .into_iter()
-            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
-        {
+    pub(crate) fn current() -> Self {
+        if let Some(compositor) = sway_ipc_compositor_from_values(
+            std::env::var_os("SCROLLSOCK"),
+            std::env::var_os("SWAYSOCK"),
+            std::env::var_os("I3SOCK"),
+        ) {
             cfg_if! {
-                if #[cfg(feature = "sway")] { Self::Sway }
-                else { tracing::error!("Not compiled with Sway support"); Self::Unsupported }
+                if #[cfg(feature = "sway")] {
+                    match compositor {
+                        SwayIpcCompositor::Scroll => Self::Scroll,
+                        SwayIpcCompositor::Sway => Self::Sway,
+                        SwayIpcCompositor::I3 => Self::I3,
+                    }
+                }
+                else {
+                    tracing::error!("Not compiled with Sway/i3 IPC support");
+                    Self::Unsupported
+                }
             }
         } else if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
             cfg_if! {
@@ -80,17 +100,62 @@ impl Compositor {
         }
     }
 
+    /// Whether the current compositor exposes a keyboard-layout client.
+    ///
+    /// i3 shares Sway's workspace and binding-mode IPC, but not Sway's
+    /// `GET_INPUTS`, `input` event, or `input ... xkb_switch_layout` extension.
+    #[cfg(feature = "keyboard")]
+    pub(crate) const fn supports_keyboard_layout_client(&self) -> bool {
+        match self {
+            #[cfg(feature = "keyboard+sway")]
+            Self::Scroll | Self::Sway => true,
+            #[cfg(feature = "keyboard+hyprland")]
+            Self::Hyprland => true,
+            _ => false,
+        }
+    }
+
+    #[cfg(feature = "workspaces")]
+    pub(crate) const fn supports_workspace_client(&self) -> bool {
+        match self {
+            #[cfg(feature = "workspaces+sway")]
+            Self::Scroll | Self::Sway | Self::I3 => true,
+            #[cfg(feature = "workspaces+hyprland")]
+            Self::Hyprland => true,
+            #[cfg(feature = "workspaces+niri")]
+            Self::Niri => true,
+            _ => false,
+        }
+    }
+
+    #[cfg(feature = "bindmode")]
+    pub(crate) const fn supports_bindmode_client(&self) -> bool {
+        match self {
+            #[cfg(feature = "bindmode+sway")]
+            Self::Scroll | Self::Sway | Self::I3 => true,
+            #[cfg(feature = "bindmode+hyprland")]
+            Self::Hyprland => true,
+            _ => false,
+        }
+    }
+
     #[cfg(feature = "bindmode")]
     pub fn create_bindmode_client(
         clients: &mut super::Clients,
     ) -> Result<Arc<dyn BindModeClient + Send + Sync>> {
-        let current = Self::get_current();
+        let current = Self::current();
         debug!("Getting keyboard_layout client for: {current}");
         match current {
             #[cfg(feature = "bindmode+sway")]
-            Self::Sway => Ok(clients.sway().map_err(|err| Error::Other(err.into()))?),
+            Self::Scroll | Self::Sway | Self::I3 => {
+                debug_assert!(current.supports_bindmode_client());
+                Ok(clients.sway().map_err(|err| Error::Other(err.into()))?)
+            }
             #[cfg(feature = "bindmode+hyprland")]
-            Self::Hyprland => Ok(clients.hyprland()),
+            Self::Hyprland => {
+                debug_assert!(current.supports_bindmode_client());
+                Ok(clients.hyprland())
+            }
             #[cfg(feature = "niri")]
             Self::Niri => Err(Error::Unsupported("bindmode", &["sway", "hyprland"])),
             Self::Unsupported => Err(Error::Unsupported("bindmode", &["sway", "hyprland"])),
@@ -103,13 +168,24 @@ impl Compositor {
     pub fn create_keyboard_layout_client(
         clients: &mut super::Clients,
     ) -> Result<Arc<dyn KeyboardLayoutClient + Send + Sync>> {
-        let current = Self::get_current();
+        let current = Self::current();
         debug!("Getting keyboard_layout client for: {current}");
         match current {
             #[cfg(feature = "keyboard+sway")]
-            Self::Sway => Ok(clients.sway().map_err(|err| Error::Other(err.into()))?),
+            Self::Scroll | Self::Sway => {
+                debug_assert!(current.supports_keyboard_layout_client());
+                Ok(clients.sway().map_err(|err| Error::Other(err.into()))?)
+            }
+            #[cfg(feature = "sway")]
+            Self::I3 => {
+                debug_assert!(!current.supports_keyboard_layout_client());
+                Err(Error::Unsupported("keyboard", &["sway", "hyprland"]))
+            }
             #[cfg(feature = "keyboard+hyprland")]
-            Self::Hyprland => Ok(clients.hyprland()),
+            Self::Hyprland => {
+                debug_assert!(current.supports_keyboard_layout_client());
+                Ok(clients.hyprland())
+            }
             #[cfg(feature = "niri")]
             Self::Niri => Err(Error::Unsupported("keyboard", &["sway", "hyprland"])),
             Self::Unsupported => Err(Error::Unsupported("keyboard", &["sway", "hyprland"])),
@@ -124,15 +200,24 @@ impl Compositor {
     pub fn create_workspace_client(
         clients: &mut super::Clients,
     ) -> Result<Arc<dyn WorkspaceClient + Send + Sync>> {
-        let current = Self::get_current();
+        let current = Self::current();
         debug!("Getting workspace client for: {current}");
         match current {
             #[cfg(feature = "workspaces+sway")]
-            Self::Sway => Ok(clients.sway().map_err(|err| Error::Other(err.into()))?),
+            Self::Scroll | Self::Sway | Self::I3 => {
+                debug_assert!(current.supports_workspace_client());
+                Ok(clients.sway().map_err(|err| Error::Other(err.into()))?)
+            }
             #[cfg(feature = "workspaces+hyprland")]
-            Self::Hyprland => Ok(clients.hyprland()),
+            Self::Hyprland => {
+                debug_assert!(current.supports_workspace_client());
+                Ok(clients.hyprland())
+            }
             #[cfg(feature = "workspaces+niri")]
-            Self::Niri => Ok(Arc::new(niri::Client::new())),
+            Self::Niri => {
+                debug_assert!(current.supports_workspace_client());
+                Ok(Arc::new(niri::Client::new()))
+            }
             Self::Unsupported => Err(Error::Unsupported(
                 "workspaces",
                 &["sway", "hyprland", "niri"],
@@ -140,6 +225,81 @@ impl Compositor {
             #[allow(unreachable_patterns)]
             _ => Err(Error::Disabled("workspaces")),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SwayIpcCompositor {
+    Scroll,
+    Sway,
+    I3,
+}
+
+fn sway_ipc_compositor_from_values(
+    scrollsock: Option<OsString>,
+    swaysock: Option<OsString>,
+    i3sock: Option<OsString>,
+) -> Option<SwayIpcCompositor> {
+    if scrollsock.is_some_and(|path| !path.is_empty()) {
+        Some(SwayIpcCompositor::Scroll)
+    } else if swaysock.is_some_and(|path| !path.is_empty()) {
+        Some(SwayIpcCompositor::Sway)
+    } else if i3sock.is_some_and(|path| !path.is_empty()) {
+        Some(SwayIpcCompositor::I3)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod compositor_detection_tests {
+    use super::*;
+
+    #[test]
+    fn compositor_socket_precedence_preserves_scroll_sway_and_i3_identity() {
+        assert_eq!(
+            sway_ipc_compositor_from_values(
+                Some(OsString::from("/run/scroll.sock")),
+                Some(OsString::from("/run/sway.sock")),
+                Some(OsString::from("/run/i3.sock")),
+            ),
+            Some(SwayIpcCompositor::Scroll)
+        );
+        assert_eq!(
+            sway_ipc_compositor_from_values(
+                None,
+                Some(OsString::from("/run/sway.sock")),
+                Some(OsString::from("/run/i3.sock")),
+            ),
+            Some(SwayIpcCompositor::Sway)
+        );
+        assert_eq!(
+            sway_ipc_compositor_from_values(None, None, Some(OsString::from("/run/i3.sock")),),
+            Some(SwayIpcCompositor::I3)
+        );
+        assert_eq!(
+            sway_ipc_compositor_from_values(
+                Some(OsString::new()),
+                Some(OsString::new()),
+                Some(OsString::new()),
+            ),
+            None
+        );
+    }
+
+    #[cfg(feature = "keyboard+sway")]
+    #[test]
+    fn i3_does_not_advertise_sway_keyboard_layout_extensions() {
+        assert!(!Compositor::I3.supports_keyboard_layout_client());
+        assert!(Compositor::Scroll.supports_keyboard_layout_client());
+        assert!(Compositor::Sway.supports_keyboard_layout_client());
+    }
+
+    #[cfg(all(feature = "workspaces+sway", feature = "bindmode+sway"))]
+    #[test]
+    fn i3_retains_the_shared_workspace_and_bindmode_clients() {
+        assert!(Compositor::I3.supports_workspace_client());
+        assert!(Compositor::I3.supports_bindmode_client());
     }
 }
 

@@ -1,6 +1,7 @@
 #[cfg(any(
     feature = "battery",
     feature = "bluetooth",
+    feature = "brightness",
     feature = "clipboard",
     feature = "keyboard",
     feature = "launcher",
@@ -16,6 +17,7 @@ mod provider;
 #[cfg(any(
     feature = "battery",
     feature = "bluetooth",
+    feature = "brightness",
     feature = "clipboard",
     feature = "keyboard",
     feature = "launcher",

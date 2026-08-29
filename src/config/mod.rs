@@ -571,7 +571,7 @@ impl ConfigLocation {
         dirs::config_dir()
             .unwrap_or_default()
             .clone()
-            .join("ironbar/config")
+            .join("cbar/config")
     }
 
     #[cfg(not(feature = "cli"))]
@@ -661,7 +661,7 @@ impl Config {
         };
 
         let mut config: Config = config_builder
-            .add_source(config::Environment::with_prefix("IRONBAR_"))
+            .add_source(config::Environment::with_prefix("CBAR_"))
             .build()
             .and_then(config::Config::try_deserialize)
             .unwrap_or_else(|err| {
@@ -701,7 +701,7 @@ impl Config {
         css_location: Option<ConfigLocation>,
     ) -> (Config, CssSource) {
         panic!(
-            "Ironbar has been configured without config support. This won't work. Please reconfigure with at least one `config` feature flag enabled."
+            "Cbar has been configured without config support. This won't work. Please reconfigure with at least one `config` feature flag enabled."
         )
     }
 }

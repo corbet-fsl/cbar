@@ -47,15 +47,22 @@ enum CommandDialect {
 
 #[cfg(any(feature = "workspaces+sway", feature = "keyboard+sway"))]
 fn active_command_dialect() -> CommandDialect {
-    command_dialect_from_values(std::env::var_os("SWAYSOCK"), std::env::var_os("I3SOCK"))
+    command_dialect_from_values(
+        std::env::var_os("SCROLLSOCK"),
+        std::env::var_os("SWAYSOCK"),
+        std::env::var_os("I3SOCK"),
+    )
 }
 
 #[cfg(any(feature = "workspaces+sway", feature = "keyboard+sway"))]
 fn command_dialect_from_values(
+    scrollsock: Option<OsString>,
     swaysock: Option<OsString>,
     i3sock: Option<OsString>,
 ) -> CommandDialect {
-    if swaysock.is_some_and(|path| !path.is_empty()) {
+    if scrollsock.is_some_and(|path| !path.is_empty())
+        || swaysock.is_some_and(|path| !path.is_empty())
+    {
         CommandDialect::Sway
     } else if i3sock.is_some_and(|path| !path.is_empty()) {
         CommandDialect::I3
@@ -558,11 +565,12 @@ mod tests {
     #[test]
     fn i3_socket_selects_i3_parser_and_round_trips_its_escape_rules() {
         assert_eq!(
-            command_dialect_from_values(None, Some(OsString::from("/run/i3.sock"))),
+            command_dialect_from_values(None, None, Some(OsString::from("/run/i3.sock"))),
             CommandDialect::I3
         );
         assert_eq!(
             command_dialect_from_values(
+                Some(OsString::from("/run/scroll.sock")),
                 Some(OsString::from("/run/sway.sock")),
                 Some(OsString::from("/run/i3.sock")),
             ),

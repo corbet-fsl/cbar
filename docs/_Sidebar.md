@@ -10,7 +10,7 @@
 
 # Dynamic content
 
-- [Controlling Ironbar](controlling-ironbar)
+- [Controlling Cbar](controlling-cbar)
 - [Dynamic values](dynamic-values)
 - [Scripts](scripts)
 - [Ironvars](ironvars)

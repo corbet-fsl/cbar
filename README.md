@@ -1,277 +1,79 @@
-<h1 align="center" >--- Ironbar ---</h1> 
+# cbar
 
-<div align="center">
-    <a href="https://github.com/JakeStanger/ironbar/releases">
-        <img src="https://img.shields.io/crates/v/ironbar?label=version&style=for-the-badge" alt="Current version" />
-    </a>
-    <a href="https://github.com/JakeStanger/ironbar/actions/workflows/build.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/jakestanger/ironbar/build.yml?style=for-the-badge" alt="Build status" />
-    </a>
-    <a href="https://github.com/JakeStanger/ironbar/issues">
-        <img src="https://img.shields.io/github/issues/jakestanger/ironbar?style=for-the-badge" alt="Open issues" />
-    </a>
-    <a href="https://github.com/JakeStanger/ironbar/blob/master/LICENSE">
-        <img src="https://img.shields.io/github/license/jakestanger/ironbar?style=for-the-badge" alt="License" />
-    </a>
-    <a href="https://crates.io/crates/ironbar">
-        <img src="https://img.shields.io/crates/d/ironbar?label=crates.io%20downloads&style=for-the-badge" alt="Crates.io downloads" />
-    </a>
-</div>
+Cbar is an opinionated GTK4 desktop panel for Wayland, written in Rust. It is
+derived from Ironbar and integrates three pieces that benefit from sharing one
+resident process:
 
----
+- a configurable layer-shell bar;
+- an offline-first application launcher; and
+- native Cairo system and network graphs.
 
-<div align="center">
-A customisable and feature-rich GTK4 bar for Wayland compositors, written in Rust.
+The notification daemon, OSD, lock screen, polkit agent, portals, and
+compositor remain separate replaceable processes.
 
-Ironbar is designed to support anything from a lightweight bar to a full desktop panel with ease.
+## Compositors
 
----
+Cbar has typed adapters for Scroll/Sway, niri, Hyprland, and i3-compatible
+runtimes. Scroll is detected directly through `SCROLLSOCK`; no IPC proxy or
+payload-rewriting service is required. A missing compositor capability disables
+only the module that consumes it.
 
-## Getting Started
+## Configuration
 
-[Wiki](https://github.com/JakeStanger/ironbar/wiki)
-|
-[Configuration Guide](https://github.com/JakeStanger/ironbar/wiki/configuration-guide)
-|
-[Style Guide](https://github.com/JakeStanger/ironbar/wiki/styling-guide)
+Cbar keeps Ironbar's bar configuration model as a directly maintained source
+superset. Existing supported bar configuration can therefore be migrated by
+moving it into Cbar's own namespace; Cbar does not install legacy paths or
+binary aliases.
 
+The default files are:
 
----
+```text
+~/.config/cbar/config.{corn,json,toml,yaml}
+~/.config/cbar/style.css
+~/.config/cbar/launcher.json
+```
 
-![Screenshot of minimal theme with clock popup widget open](https://f.jstanger.dev/github/ironbar/themes/minimal.png?raw)
-![Screenshot of desktop theme with MPD popup open](https://f.jstanger.dev/github/ironbar/themes/desktop.png?raw)
+`CBAR_CONFIG`, `CBAR_CSS`, and `CBAR_LAUNCHER_CONFIG` override those locations.
+The launcher schema and mutable launcher state are separate fault domains, so a
+bad launcher configuration cannot prevent a valid bar from starting.
 
-✨ Looking for a starting point, or want to show off? Head to [Show and tell](https://github.com/JakeStanger/ironbar/discussions/categories/show-and-tell) ✨
-
-</div>
-
----
-
-## Features
-
-- First-class support for Sway and Hyprland, and partial support for Niri
-- Fully themeable with hot-loaded CSS
-- Popups to show rich content
-- A range of modules which integrate with native desktop libraries
-- Ability to create custom widgets, run scripts and embed dynamic content (including via Lua)
-- Easy to configure anything from a single bar across all monitors, to multiple different unique bars per monitor 
-- Support for multiple config languages
-
----
-
-Ironbar was born out of my [frustrations with existing alternatives](https://github.com/JakeStanger/ironbar/issues/965#issuecomment-2868780449):
-I wanted an experience similar to that of a full desktop panel,
-and I wanted that without requiring a lot of configuration for the end-user.
-The project strives to stay true to these key philosophies:
-
-- **Easy to configure**: The config schema should be as intuitive and as standardized as possible. 
-  Each module should work the same way on every compositor with no additional configuration.
-- **A middle-ground**: Ironbar should provide more customization and a richer UI than a light-weight bar,
-  but should not strive to step on the toes of full custom shell solutions.
-- **Multithreaded async design**: Scripts should run in the background. 
-  If one module or service blocks or crashes, the rest of the bar should continue to run smoothly.
-
-## Installation
-
-[![Packaging status](https://repology.org/badge/vertical-allrepos/ironbar.svg)](https://repology.org/project/ironbar/versions)
-
-Ironbar can be installed from source or using your preferred package manager.
-
-It is also recommended to install a [Nerd Font](https://www.nerdfonts.com/#home) for displaying symbols.
-
-### Cargo
-
-[crate](https://crates.io/crates/ironbar)
-
-#### Using cargo-binstall
-
-Ensure you have [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) and the [runtime depedencies](https://github.com/JakeStanger/ironbar/wiki/compiling#Build-requirements) installed. This installs the prebuilt binary from Github.
+Open the launcher with:
 
 ```sh
-cargo binstall ironbar --locked
+cbar launcher show
 ```
 
-#### Cargo (from source)
+Other control commands are available through `cbar --help`.
 
-Ensure you have the [build dependencies](https://github.com/JakeStanger/ironbar/wiki/compiling#Build-requirements) installed.
+## Building
+
+Build the complete feature set with Cargo:
 
 ```sh
-cargo install ironbar --locked
+cargo build --release --all-features --locked
 ```
 
-### Arch Linux
-
-[official package](https://archlinux.org/packages/extra/x86_64/ironbar) | [aur git package](https://aur.archlinux.org/packages/ironbar-git)
+Or build the Nix package:
 
 ```sh
-pacman -S ironbar
-# or
-yay -S ironbar-git
+nix build .#cbar
 ```
 
-### Nix
-
-[nix package](https://search.nixos.org/packages?channel=unstable&show=ironbar)
+The release gate validates every supported feature combination and then runs a
+real headless layer-shell session:
 
 ```sh
-nix-shell -p ironbar
+checks/release-matrix.sh wtype -- sway -c '{config}'
 ```
 
-#### Flake
+See [checks/README.md](checks/README.md) for the measured startup, memory, idle,
+and redraw contracts. See [docs/Cbar architecture.md](docs/Cbar%20architecture.md)
+for ownership and failure boundaries.
 
-A flake is included with the repo which can be used with Home Manager.
+## Upstream and license
 
-<details>
-<summary>Example usage</summary>
-
-```nix
-{
-  # Add the ironbar flake input
-  inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-  inputs.ironbar = {
-    url = "github:JakeStanger/ironbar";
-    inputs.nixpkgs.follows = "nixpkgs";
-  };
-  inputs.hm = {
-    url = "github:nix-community/home-manager";
-    inputs.nixpkgs.follows = "nixpkgs";
-  };
-
-  outputs = inputs: {
-    homeManagerConfigurations."USER@HOSTNAME" = inputs.hm.lib.homeManagerConfiguration {
-      pkgs = nixpkgs.legacyPackages.x86_64-linux;
-      modules = [
-        # And add the home-manager module
-        inputs.ironbar.homeManagerModules.default
-        {
-          # And configure
-          programs.ironbar = {
-            enable = true;
-            systemd = true;
-            config = {
-              # An example: 
-              monitors = {
-                DP-1 = {
-                  anchor_to_edges = true;
-                  position = "top";
-                  height = 16;
-                  start = [
-                    { type = "clock"; }
-                  ];
-                  end = [
-                    { 
-                      type = "tray";
-                      icon_size = 16;
-                    }
-                  ];
-                };
-              };
-            };
-            style = /* css */ ''
-              /* An example */
-              * {
-                font-family: Noto Sans Nerd Font, sans-serif;
-                font-size: 16px;
-                border: none;
-                border-radius: 0;
-              }
-            '';
-            package = inputs.ironbar;
-            features = ["feature" "another_feature"];
-          };
-        }
-      ];
-    };
-  };
-}
-```
-
-</details>
-
-CI builds are automatically cached to Cachix.
-
-- Subsituter: `jakestanger.cachix.org`
-- Public key: `jakestanger.cachix.org-1:VWJE7AWNe5/KOEvCQRxoE8UsI2Xs2nHULJ7TEjYm7mM=`
-
-### Void Linux
-
-[void package](https://github.com/void-linux/void-packages/tree/master/srcpkgs/ironbar)
-
-```sh
-xbps-install ironbar
-```
-
-### Source
-
-[repo](https://github.com/jakestanger/ironbar)
-
-Ensure you have the [build dependencies](https://github.com/JakeStanger/ironbar/wiki/compiling#Build-requirements) installed.
-
-```sh
-git clone https://github.com/jakestanger/ironbar.git
-cd ironbar
-cargo build --release
-# change path to wherever you want to install
-install target/release/ironbar ~/.local/bin/ironbar
-```
-
-By default, all features are enabled. 
-See [here](https://github.com/JakeStanger/ironbar/wiki/compiling#features) for controlling which features are included.
-
-## Running
-
-Once installed, you will need to create a config and optionally a stylesheet in `.config/ironbar`.
-See the [Configuration Guide](https://github.com/JakeStanger/ironbar/wiki/configuration-guide) and [Style Guide](https://github.com/JakeStanger/ironbar/wiki/styling-guide) for full details.
-
-Ironbar can be launched using the `ironbar` binary.
-
-The `IRONBAR_LOG` and `IRONBAR_FILE_LOG` environment variables can be set
-to change console and file log verbosity respectively.
-You can use any of `error`, `warn`, `info`, `debug` or `trace`.
-
-These default to `IRONBAR_LOG=info` and `IRONBAR_FILE_LOG=warn`.
-Note that you cannot increase the file log verbosity above console verbosity.
-
-Log files can be found at `~/.local/share/ironbar/.log`.
-
-## Status
-
-Ironbar is an **alpha** project. 
-It is unfinished and subject to constant breaking changes, and will continue that way until the foundation is rock solid.
-
-If you would like to take the risk and help shape development, any bug reports, feature requests and discussion is welcome.
-
-I use Ironbar on my daily driver, so development is active. Features aim to be stable and well documented before being merged.
-
-
-## Contribution Guidelines
-
-All are welcome, but I ask a few basic things to help make things easier. Please check [here](https://github.com/JakeStanger/ironbar/blob/master/CONTRIBUTING.md) for details.
-
-## Acknowledgements
-
-- [Waybar](https://github.com/Alexays/Waybar) - A lot of the initial inspiration, and a pretty great bar
-- [Rustbar](https://github.com/zeroeightysix/rustbar) - Served as a good demo for writing a basic GTK bar in Rust
-- [Smithay Client Toolkit](https://github.com/Smithay/client-toolkit) - Essential in being able to communicate to Wayland
-- [gtk-layer-shell](https://github.com/wmww/gtk-layer-shell) - Ironbar and many other projects would be impossible without this
-- [Mixxc](https://github.com/Elvyria/Mixxc) - Basis for Ironbar's PulseAudio client code and a cool standalone volume widget
-- [JetBrains](https://www.jetbrains.com/community/opensource/#support) - Supply a free all products pack licence
-
----
-<div align="center">
-    <p><b>Thanks to everybody who has contributed to Ironbar in any shape or form :heart:</b></p>
-    <a href = "https://github.com/jakestanger/ironbar/graphs/contributors">
-      <img src = "https://contrib.rocks/image?repo=jakestanger/ironbar"/>
-    </a>
-    <p> </p>
-    <a href="https://www.star-history.com/?repos=jakestanger%2Fironbar&type=date&legend=top-left">
-     <picture>
-       <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=jakestanger/ironbar&type=date&theme=dark&legend=top-left&sealed_token=s0-4JcHmtl5XFZubXLTaEyLNJtTrNyHORiQG9d2-s1pb0wEpok9t67tt22A0M69dRqy6WOxt0zK3L8g4ZTLU2H1nMx26O2y7oUFe3_PyldKinmMqqzPuFf4fy8VTTZzD-9wnHCho_n1A1lEycuMo4ZcqqInqtEO2FQ8z1q6LQVjGgHNpvFfC6955nw89" />
-       <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=jakestanger/ironbar&type=date&legend=top-left&sealed_token=s0-4JcHmtl5XFZubXLTaEyLNJtTrNyHORiQG9d2-s1pb0wEpok9t67tt22A0M69dRqy6WOxt0zK3L8g4ZTLU2H1nMx26O2y7oUFe3_PyldKinmMqqzPuFf4fy8VTTZzD-9wnHCho_n1A1lEycuMo4ZcqqInqtEO2FQ8z1q6LQVjGgHNpvFfC6955nw89" />
-       <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=jakestanger/ironbar&type=date&legend=top-left&sealed_token=s0-4JcHmtl5XFZubXLTaEyLNJtTrNyHORiQG9d2-s1pb0wEpok9t67tt22A0M69dRqy6WOxt0zK3L8g4ZTLU2H1nMx26O2y7oUFe3_PyldKinmMqqzPuFf4fy8VTTZzD-9wnHCho_n1A1lEycuMo4ZcqqInqtEO2FQ8z1q6LQVjGgHNpvFfC6955nw89" />
-     </picture>
-    </a>
-</div>
-<br>
-
----
+Cbar is MIT licensed. The fork started from Ironbar commit
+`5b96bcffac54dd82347badcc07f79d58efa715c7`; the integrated launcher came from
+nixlaunch commit `8168771811a225448d682113379f91ef1373e7ae`. Exact provenance
+and the upstream update policy are recorded in [UPSTREAM.md](UPSTREAM.md) and
+[NOTICE](NOTICE).

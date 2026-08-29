@@ -1,5 +1,5 @@
 The server listens on a Unix socket.
-The path is printed on startup, and can usually be found at `/run/user/$UID/ironbar-ipc.sock`.
+The path is printed on startup, and can usually be found at `/run/user/$UID/cbar-ipc.sock`.
 
 Commands and responses are sent as JSON objects.
 The JSON should be minified and must NOT contain any `\n` characters.

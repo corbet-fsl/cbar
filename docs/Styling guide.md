@@ -1,6 +1,6 @@
 Ironbar ships with no styles by default, so will fall back to the default GTK styles.
 
-To style the bar, create a file at `~/.config/ironbar/style.css`. This default path can be overridden by using the `IRONBAR_CSS` environment variable.
+To style the bar, create a file at `~/.config/cbar/style.css`. This default path can be overridden by using the `CBAR_CSS` environment variable.
 
 Style changes are hot-loaded so there is no need to reload the bar.
 
@@ -10,8 +10,8 @@ which only includes a subset of the full web spec (plus a few non-standard prope
 > [!TIP]
 > The use of GTK4 does not imply the use of `libadwaita`.
 > Many GTK4 apps do use the library, so this can be confusing.
-> Any `libadwaita` based themes or configuration will not apply to Ironbar.
-> GTK4 themes will apply to Ironbar.
+> Any `libadwaita` based themes or configuration will not apply to Cbar.
+> GTK4 themes will apply to Cbar.
 
 The below table describes the selectors provided by the bar itself.
 Information on styling individual modules can be found on their pages in the sidebar.
@@ -28,7 +28,7 @@ Information on styling individual modules can be found on their pages in the sid
 | `.widget`           | Any widget.                                |
 | `.popup`            | Any popup box.                             |
 
-Every Ironbar widget can be selected using a `kebab-case` class name matching its name. 
+Every Cbar widget can be selected using a `kebab-case` class name matching its name.
 You can also target popups by prefixing `popup-` to the name. For example, you can use `.clock` and `.popup-clock` respectively.
 
 Setting the `name` option on a widget allows you to target that specific instance using `#name`. 
@@ -42,7 +42,7 @@ These names are all lower case with no separator, so `MenuBar` -> `menubar`.
 > For example, attempting to set text size on `.popup-clipboard .item` will likely have no effect. 
 > Instead, you can target the more specific `.popup-clipboard .item label`. 
 
-Running `ironbar inspect` can be used to find out how to address an element.
+Running `cbar inspect` can be used to find out how to address an element.
 
 GTK CSS does not support custom properties, but it does have its own custom `@define-color` syntax which you can use for re-using colours:
 

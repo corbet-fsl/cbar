@@ -1,5 +1,5 @@
 {
-  description = "Nix Flake for ironbar";
+  description = "Cbar GTK4 desktop panel";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -34,14 +34,14 @@
             dbus
           ];
 
-          inputsFrom = [ self.packages.${pkgs.stdenv.hostPlatform.system}.ironbar ];
+          inputsFrom = [ self.packages.${pkgs.stdenv.hostPlatform.system}.cbar ];
         };
 
       });
 
       # Packages
       packages = forAllSystems (pkgs: {
-        ironbar =
+        cbar =
           let
             props = builtins.fromTOML (builtins.readFile ./Cargo.toml);
             version = props.package.version;
@@ -51,29 +51,25 @@
             inherit version craneLib;
           };
 
-        default = self.packages.${pkgs.stdenv.hostPlatform.system}.ironbar;
+        default = self.packages.${pkgs.stdenv.hostPlatform.system}.cbar;
       });
 
       # Apps
       apps = forAllSystems (
         pkgs:
         let
-          ironbar = {
+          cbar = {
             type = "app";
-            program = pkgs.lib.getExe self.packages.${pkgs.stdenv.hostPlatform.system}.ironbar;
+            program = pkgs.lib.getExe self.packages.${pkgs.stdenv.hostPlatform.system}.cbar;
           };
         in
         {
-          inherit ironbar;
-          default = ironbar;
+          inherit cbar;
+          default = cbar;
         }
       );
 
       homeManagerModules.default = import ./nix/module.nix self;
     };
 
-  nixConfig = {
-    extra-substituters = [ "https://jakestanger.cachix.org" ];
-    extra-trusted-public-keys = [ "jakestanger.cachix.org-1:VWJE7AWNe5/KOEvCQRxoE8UsI2Xs2nHULJ7TEjYm7mM=" ];
-  };
 }

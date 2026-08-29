@@ -12,8 +12,7 @@ compatibility configuration or parser for retired runtime paths.
 
 The integrated launcher deliberately has a separate, bounded JSON schema and
 reload fault domain. An absent or invalid launcher configuration cannot make a
-valid bar configuration fall back or prevent the bar from starting. Under the
-current working namespace its default is
+valid bar configuration fall back or prevent the bar from starting. Its default is
 `$XDG_CONFIG_HOME/cbar/launcher.json`, overridable with
 `$CBAR_LAUNCHER_CONFIG`; neither path is a compatibility alias for nixlaunch.
 

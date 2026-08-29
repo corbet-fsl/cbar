@@ -9,13 +9,13 @@
 # Usage:
 #   checks/headless-session.sh <cbar> <wtype-compatible-input-driver> -- <compositor> [arguments...]
 # Example:
-#   checks/headless-session.sh target/debug/ironbar wtype -- scroll -c '{config}'
+#   checks/headless-session.sh target/debug/cbar wtype -- scroll -c '{config}'
 set -euo pipefail
 
 usage() {
     printf '%s\n' \
         "usage: $0 <cbar> <input-driver> -- <compositor> [arguments...]" \
-        "example: $0 target/debug/ironbar wtype -- scroll -c '{config}'" >&2
+        "example: $0 target/debug/cbar wtype -- scroll -c '{config}'" >&2
     exit 2
 }
 
@@ -43,7 +43,7 @@ command_exists "${COMPOSITOR_ARGV[0]}" || {
     printf 'no compositor: %s\n' "${COMPOSITOR_ARGV[0]}" >&2
     exit 2
 }
-for dependency in bash dbus-run-session ps python3 setsid; do
+for dependency in bash date dbus-run-session ps python3 setsid; do
     command_exists "$dependency" || { printf 'missing dependency: %s\n' "$dependency" >&2; exit 2; }
 done
 
@@ -292,6 +292,7 @@ export WLR_BACKENDS=headless
 export WLR_RENDERER=pixman
 export WLR_HEADLESS_OUTPUTS=1
 export WLR_LIBINPUT_NO_DEVICES=1
+export GSK_RENDERER=cairo
 unset HOME WAYLAND_DISPLAY WAYLAND_SOCKET SWAYSOCK SCROLLSOCK I3SOCK NIRI_SOCKET \
     HYPRLAND_INSTANCE_SIGNATURE DISPLAY CBAR_LAUNCHER_NO_LAYER
 
@@ -313,6 +314,36 @@ done
 [[ -n $wayland_display ]] || fail "compositor never created a Wayland socket"
 export WAYLAND_DISPLAY=$wayland_display
 
+# Connect the compositor adapter to the real isolated IPC socket. Scroll and
+# Sway intentionally keep distinct environment names; accepting both here
+# proves cbar does not need a schema-rewriting proxy.
+compositor_socket=
+compositor_socket_kind=
+for _ in $(seq 1 150); do
+    for socket in "$rig"/scroll-ipc.*.sock; do
+        if [[ -S $socket ]]; then
+            compositor_socket=$socket
+            compositor_socket_kind=scroll
+            break 2
+        fi
+    done
+    for socket in "$rig"/sway-ipc.*.sock; do
+        if [[ -S $socket ]]; then
+            compositor_socket=$socket
+            compositor_socket_kind=sway
+            break 2
+        fi
+    done
+    process_group_alive "$compositor_pid" || fail "compositor exited before creating its IPC socket"
+    sleep 0.1
+done
+[[ -n $compositor_socket ]] || fail "compositor never created an IPC socket"
+if [[ $compositor_socket_kind == scroll ]]; then
+    export SCROLLSOCK=$compositor_socket
+else
+    export SWAYSOCK=$compositor_socket
+fi
+
 # A headless seat starts without a physical keyboard. Keep one neutral virtual keyboard object
 # alive for the session so the compositor establishes keyboard focus before the layer surface maps;
 # a one-shot injector created only after map can disappear before that seat transition is applied.
@@ -322,22 +353,34 @@ assert_session_leader "$input_keeper_pid" "input keeper"
 sleep 0.1
 process_group_alive "$input_keeper_pid" || fail "input driver could not keep a virtual keyboard alive"
 
+startup_started_ns=$(date +%s%N)
 CBAR_LAYOUT_TRACE=1 \
 CBAR_LAUNCHER_TRACE=1 \
+CBAR_GRAPH_TRACE=1 \
 CBAR_LAUNCHER_CONFIG="$rig/launcher.json" \
 CBAR_LAUNCHER_CACHE="$rig/cache/cbar/launcher/inventory" \
-IRONBAR_CONFIG="$rig/bar.toml" \
-IRONBAR_CSS="$rig/bar.css" \
+CBAR_CONFIG="$rig/bar.toml" \
+CBAR_CSS="$rig/bar.css" \
 setsid -- "$cbar" >"$rig/cbar.log" 2>&1 &
 bar_pid=$!
 assert_session_leader "$bar_pid" "cbar"
 
-for _ in $(seq 1 150); do
-    [[ -S $rig/ironbar-ipc.sock ]] && break
-    process_group_alive "$bar_pid" || fail "cbar exited before creating its IPC socket"
-    sleep 0.1
+ipc_ready=false
+layout_ready=false
+startup_mapped_ns=
+for _ in $(seq 1 1500); do
+    [[ -S $rig/cbar-ipc.sock ]] && ipc_ready=true
+    if ! $layout_ready && grep -q 'cbar-layout-trace ' "$rig/cbar.log" 2>/dev/null; then
+        startup_mapped_ns=$(date +%s%N)
+        layout_ready=true
+    fi
+    $ipc_ready && $layout_ready && break
+    process_group_alive "$bar_pid" || fail "cbar exited before its bar and IPC socket were ready"
+    sleep 0.01
 done
-[[ -S $rig/ironbar-ipc.sock ]] || fail "cbar never created its IPC socket"
+$ipc_ready || fail "cbar never created its IPC socket"
+$layout_ready || fail "cbar never mapped its bar surface"
+startup_to_layout_ms=$(((startup_mapped_ns - startup_started_ns) / 1000000))
 
 launcher_status() {
     "$cbar" launcher status 2>/dev/null
@@ -370,6 +413,37 @@ count_cancel_keys() {
 
 count_layer_shell_selections() {
     grep -c 'cbar-launcher-trace surface=layer-shell ' "$rig/cbar.log" 2>/dev/null || true
+}
+
+count_graph_samples() {
+    grep -c 'cbar-graph-trace event=sample ' "$rig/cbar.log" 2>/dev/null || true
+}
+
+count_graph_redraws() {
+    grep -c 'cbar-graph-trace event=redraw ' "$rig/cbar.log" 2>/dev/null || true
+}
+
+process_metrics() {
+    python3 - "$bar_pid" <<'PY'
+import os
+import pathlib
+import sys
+import time
+
+pid = int(sys.argv[1])
+stat = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+# The command name is parenthesised and may contain spaces. Fields after the final
+# closing parenthesis begin at field 3 (`state`).
+fields = stat[stat.rfind(")") + 2 :].split()
+cpu_ticks = int(fields[11]) + int(fields[12])
+resident_pages = int(fields[21])
+print(
+    cpu_ticks,
+    os.sysconf("SC_CLK_TCK"),
+    resident_pages * os.sysconf("SC_PAGE_SIZE") // 1024,
+    time.monotonic_ns(),
+)
+PY
 }
 
 wait_for_counter_above() {
@@ -456,8 +530,130 @@ wait_for_counter_above count_launcher_maps "$explicit_maps_before" "second launc
 "$cbar" launcher hide >/dev/null
 wait_for_status resident "explicit hide"
 
+# Measure a genuinely idle resident window. Do not poll cbar's IPC here: the measurement itself
+# must not manufacture control-socket work. Process liveness checks are kernel-only.
+read -r idle_ticks_before clock_ticks _ idle_started_ns < <(process_metrics)
+graph_samples_before=$(count_graph_samples)
+graph_redraws_before=$(count_graph_redraws)
+for _ in $(seq 1 120); do
+    sleep 0.05
+    process_group_alive "$bar_pid" || fail "cbar exited during the performance window"
+done
+read -r idle_ticks_after clock_ticks_after resident_rss_kib idle_finished_ns < <(process_metrics)
+[[ $clock_ticks == "$clock_ticks_after" ]] || fail "process clock tick rate changed"
+idle_window_ms=$(((idle_finished_ns - idle_started_ns) / 1000000))
+idle_cpu_ms=$(((idle_ticks_after - idle_ticks_before) * 1000 / clock_ticks))
+graph_samples=$(( $(count_graph_samples) - graph_samples_before ))
+graph_redraws=$(( $(count_graph_redraws) - graph_redraws_before ))
+graph_expected_samples=$(((idle_window_ms + 250) / 500))
+graph_min_samples=$((graph_expected_samples > 0 ? graph_expected_samples - 1 : 0))
+graph_max_samples=$((graph_expected_samples + 1))
+(( graph_samples >= graph_min_samples && graph_samples <= graph_max_samples )) ||
+    fail "graph sampler cadence drifted: observed $graph_samples samples in ${idle_window_ms}ms; expected $graph_expected_samples +/- 1 at 500ms"
+(( graph_redraws >= 1 )) || fail "mapped graph received samples but never redrew"
+(( graph_redraws <= graph_samples + 1 )) ||
+    fail "graph redrew more often than new samples required"
+
+python3 - "$rig/performance.json" \
+    "$startup_to_layout_ms" "$resident_rss_kib" "$idle_window_ms" "$idle_cpu_ms" \
+    "$graph_samples" "$graph_redraws" "${compositor[0]}" "$cbar" "$clock_ticks" \
+    "$rig/compositor.conf" "${compositor[@]}" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import shutil
+import sys
+
+path = pathlib.Path(sys.argv[1])
+metrics = {
+    "startup_to_layout_ms": int(sys.argv[2]),
+    "resident_rss_kib": int(sys.argv[3]),
+    "idle_window_ms": int(sys.argv[4]),
+    "idle_cpu_ms": int(sys.argv[5]),
+    "graph_samples": int(sys.argv[6]),
+    "graph_redraws": int(sys.argv[7]),
+}
+compositor = shutil.which(sys.argv[8]) or sys.argv[8]
+binary = shutil.which(sys.argv[9]) or sys.argv[9]
+generated_config = sys.argv[11]
+compositor_argv = [os.path.realpath(compositor)]
+compositor_argv.extend(
+    "{config}" if argument == generated_config else argument for argument in sys.argv[13:]
+)
+cpu_model = "unknown"
+try:
+    for line in pathlib.Path("/proc/cpuinfo").read_text(
+        encoding="utf-8", errors="replace"
+    ).splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key.strip() in {"model name", "Hardware", "Processor"}:
+            cpu_model = value.strip()
+            break
+except OSError:
+    pass
+context = {
+    "architecture": os.uname().machine,
+    "binary_profile": pathlib.Path(os.path.realpath(binary)).parent.name,
+    "clock_ticks": int(sys.argv[10]),
+    "compositor_argv": compositor_argv,
+    "compositor_executable": os.path.realpath(compositor),
+    "compositor_renderer": "pixman",
+    "cpu_model": cpu_model,
+    "gdk_backend": "wayland",
+    "graph_sample_interval_ms": 500,
+    "gtk_renderer": "cairo",
+    "idle_target_ms": 6000,
+    "kernel_release": os.uname().release,
+    "logical_cpus": os.cpu_count(),
+    "output_mode": "1920x1080",
+    "page_size": os.sysconf("SC_PAGE_SIZE"),
+}
+encoded_context = json.dumps(context, sort_keys=True, separators=(",", ":")).encode()
+record = {
+    "schema": 1,
+    "context": context,
+    "context_fingerprint": hashlib.sha256(encoded_context).hexdigest(),
+    "metrics": metrics,
+}
+path.write_text(
+    json.dumps(record, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+
+printf 'performance startup_to_layout_ms=%s resident_rss_kib=%s idle_window_ms=%s idle_cpu_ms=%s graph_samples=%s graph_redraws=%s\n' \
+    "$startup_to_layout_ms" "$resident_rss_kib" "$idle_window_ms" "$idle_cpu_ms" \
+    "$graph_samples" "$graph_redraws"
+
 printf 'launcher first_maps=%s final_maps=%s final_status=%s\n' \
     "$first_maps" "$(count_launcher_maps)" "$(launcher_status)"
+
+# The built-in minimal and desktop configurations are the fork's verbatim upstream compatibility
+# fixtures. Map both against the same private compositor so the gate proves more than deserialization.
+stop_process_group "$bar_pid" || fail "could not stop primary cbar fixture"
+bar_pid=
+for upstream_fixture in minimal desktop; do
+    fixture_log="$rig/upstream-$upstream_fixture.log"
+    rm -f -- "$rig/cbar-ipc.sock"
+    CBAR_LAYOUT_TRACE=1 \
+    CBAR_LAUNCHER_CONFIG="$rig/launcher.json" \
+    CBAR_LAUNCHER_CACHE="$rig/cache/cbar/launcher/inventory" \
+    setsid -- "$cbar" --config "$upstream_fixture" >"$fixture_log" 2>&1 &
+    bar_pid=$!
+    assert_session_leader "$bar_pid" "upstream $upstream_fixture fixture"
+    for _ in $(seq 1 200); do
+        grep -q 'cbar-layout-trace ' "$fixture_log" 2>/dev/null && break
+        process_group_alive "$bar_pid" ||
+            fail "upstream $upstream_fixture fixture exited before map"
+        sleep 0.05
+    done
+    grep -q 'cbar-layout-trace ' "$fixture_log" 2>/dev/null ||
+        fail "upstream $upstream_fixture fixture did not map"
+    printf 'upstream fixture=%s render=PASS\n' "$upstream_fixture"
+    stop_process_group "$bar_pid" || fail "could not stop upstream $upstream_fixture fixture"
+    bar_pid=
+done
 SESSION
 then
     printf 'headless session failed\n' >&2
@@ -537,6 +733,10 @@ print("headless cbar session OK")
 PY
 
 cat "$RIG/session.log"
+if [[ -n ${PERF_OUT:-} ]]; then
+    mkdir -p -- "$(dirname -- "$PERF_OUT")"
+    cp -- "$RIG/performance.json" "$PERF_OUT"
+fi
 if [[ -n ${TRACE_OUT:-} ]]; then
     cp -- "$RIG/cbar.log" "$TRACE_OUT"
 fi

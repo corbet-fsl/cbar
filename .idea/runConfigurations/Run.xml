@@ -1,10 +1,10 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Run" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
-    <option name="command" value="run --package ironbar --bin ironbar" />
+    <option name="command" value="run --package cbar --bin cbar" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs>
-      <env name="IRONBAR_LOG" value="info" />
-      <env name="IRONBAR_CONFIG" value="examples/test.corn" />
+      <env name="CBAR_LOG" value="info" />
+      <env name="CBAR_CONFIG" value="examples/test.corn" />
     </envs>
     <option name="emulateTerminal" value="true" />
     <option name="channel" value="DEFAULT" />

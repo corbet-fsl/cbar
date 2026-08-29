@@ -33,7 +33,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for ResponsiveGraphArea {
-        const NAME: &'static str = "IronbarSystemGraphArea";
+        const NAME: &'static str = "CbarSystemGraphArea";
         type Type = super::ResponsiveGraphArea;
         type ParentType = DrawingArea;
     }

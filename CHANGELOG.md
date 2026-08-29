@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [cbar 0.1.0]
+
+- Establish the standalone `cbar` binary, service, configuration, IPC, and
+  application identity without legacy aliases.
+- Integrate the resident matrix launcher and native responsive Cairo system
+  graphs into the GTK4 panel.
+- Add direct Scroll socket detection and resilient typed Scroll/Sway IPC.
+- Preserve Ironbar's supported configuration, compositor, module, extension,
+  architecture, distribution, and Cargo feature scope.
+- Add a real layer-shell release gate with startup, memory, idle, sampling, and
+  redraw measurements.
+
+The entries below are the inherited Ironbar changelog at the fork base.
+
 ## [v0.19.0] - 2026-05-17
 
 ### :package: Note to packagers

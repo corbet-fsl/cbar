@@ -68,8 +68,8 @@ let {
     $clock = { 
         type = "clock" 
         format = "%H:%M:%S"
-        on_mouse_enter = "ironbar var set clock_state true" 
-        on_mouse_exit = "ironbar var set clock_state false" 
+        on_mouse_enter = "cbar var set clock_state true"
+        on_mouse_exit = "cbar var set clock_state false"
     }
     
     $clock_extra = {

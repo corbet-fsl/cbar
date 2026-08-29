@@ -61,7 +61,7 @@ mod popup;
 mod script;
 mod style;
 
-pub const APP_ID: &str = "dev.jstanger.ironbar";
+pub const APP_ID: &str = "ch.corbet.cbar";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SHA: &str = env!("VERGEN_GIT_SHA");
 const DESCRIBE: &str = env!("VERGEN_GIT_DESCRIBE");
@@ -71,8 +71,8 @@ fn main() {
         if #[cfg(feature = "cli")] {
             run_with_args();
         } else {
-            let config_location = ConfigLocation::from_env("IRONBAR_CONFIG").unwrap_or_default();
-            start_ironbar(false, config_location, ConfigLocation::from_env("IRONBAR_CSS"));
+            let config_location = ConfigLocation::from_env("CBAR_CONFIG").unwrap_or_default();
+            start_ironbar(false, config_location, ConfigLocation::from_env("CBAR_CSS"));
         }
     }
 }
@@ -202,9 +202,9 @@ impl Ironbar {
 
     fn start(self) {
         if DESCRIBE.contains("-g") {
-            info!("Ironbar version {}-{}", VERSION, SHA);
+            info!("Cbar version {}-{}", VERSION, SHA);
         } else {
-            info!("Ironbar version {}", VERSION);
+            info!("Cbar version {}", VERSION);
         }
 
         info!("Starting application");
@@ -227,7 +227,7 @@ impl Ironbar {
 
         app.connect_activate(move |app| {
             if running.load(Ordering::Relaxed) {
-                info!("Ironbar already running, returning");
+                info!("Cbar already running, returning");
                 return;
             }
 

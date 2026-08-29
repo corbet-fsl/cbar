@@ -14,12 +14,12 @@ use crate::config::CommonConfig;
 use crate::modules::{Module, ModuleInfo, ModuleParts, WidgetContext};
 use crate::{module_impl, spawn};
 use area::ResponsiveGraphArea;
+use cbar_launch_service::{submit_detached_argv, warm_launch_service};
 use gtk::DrawingArea;
 use gtk::gdk::{BUTTON_PRIMARY, BUTTON_SECONDARY};
 use gtk::prelude::*;
 use gtk::{GestureClick, Tooltip};
 use hub::{GraphDemand, GraphHub};
-use ironbar_launch_service::{submit_detached_argv, warm_launch_service};
 use model::{GRAPH_HEIGHT, GraphFrame, Layout, Metric, MetricSet};
 use serde::Deserialize;
 use std::cell::RefCell;
@@ -172,22 +172,23 @@ impl Module<gtk::Box> for SystemGraphModule {
         {
             let frame = frame.clone();
             let demand = self.demand.clone();
+            let hub = GraphHub::global();
             let subscription_guard = UiSubscriptionGuard::new(cancel_tx);
             area.set_draw_func(move |area, cairo, width, height| {
                 let _keep_subscription_alive = &subscription_guard;
+                hub.record_redraw();
                 let frame = frame.borrow();
-                let requested = Layout::requested(frame.available);
-                let layout = Layout::fit(requested, width);
-                let mut probe_candidates = frame.available;
-                for metric in frame.probeable.iter() {
-                    probe_candidates.insert(metric);
-                }
-                let probe_layout = Layout::fit(Layout::requested(probe_candidates), width);
-                let probe: MetricSet = probe_layout
-                    .demand
-                    .iter()
-                    .filter(|metric| frame.probeable.contains(*metric))
-                    .collect();
+                // The drawing area's natural width contains only sources
+                // already discovered. Use the root allocation as a probe-only
+                // capacity signal so a cold core-only canvas can discover
+                // optional sources which would fit the bar. Rendering and
+                // width requests continue to use only proven availability.
+                let probe_capacity = area
+                    .root()
+                    .map(|root| root.width())
+                    .filter(|root_width| *root_width > 0)
+                    .unwrap_or(width);
+                let (layout, probe) = fitted_graph_demand(&frame, width, probe_capacity);
                 demand.store(layout.demand, probe);
                 let font = area.pango_context().font_description();
                 let font_family = font
@@ -242,6 +243,28 @@ impl Module<gtk::Box> for SystemGraphModule {
             popup: None,
         })
     }
+}
+
+fn fitted_graph_demand(
+    frame: &GraphFrame,
+    visible_width: i32,
+    probe_capacity_width: i32,
+) -> (Layout, MetricSet) {
+    let layout = Layout::fit(Layout::requested(frame.available), visible_width);
+    let mut probe_candidates = frame.available;
+    for metric in frame.probeable.iter() {
+        probe_candidates.insert(metric);
+    }
+    let probe_layout = Layout::fit(
+        Layout::requested(probe_candidates),
+        probe_capacity_width.max(visible_width),
+    );
+    let probe = probe_layout
+        .demand
+        .iter()
+        .filter(|metric| frame.probeable.contains(*metric))
+        .collect();
+    (layout, probe)
 }
 
 struct UiSubscriptionGuard(Option<oneshot::Sender<()>>);
@@ -603,6 +626,41 @@ mod interaction_tests {
                 (1 << Metric::Cpu as u8) | (1 << Metric::Ram as u8),
                 0,
             )
+        );
+    }
+
+    #[test]
+    fn cold_probe_uses_bar_capacity_without_reserving_missing_cells() {
+        let core: MetricSet = [Metric::Cpu, Metric::Ram].into_iter().collect();
+        let optional: MetricSet = [
+            Metric::Io,
+            Metric::Vpu,
+            Metric::Gpu,
+            Metric::Npu,
+            Metric::Lan,
+            Metric::Wlan,
+            Metric::Wwan,
+            Metric::Vpn,
+        ]
+        .into_iter()
+        .collect();
+        let frame = GraphFrame {
+            available: core,
+            probeable: optional,
+            ..GraphFrame::default()
+        };
+
+        let (visible, wide_probe) = fitted_graph_demand(&frame, 242, 1920);
+        assert_eq!(visible.demand, core);
+        assert_eq!(visible.cells.len(), 2);
+        assert_eq!(visible.preferred_width, 242);
+        assert_eq!(wide_probe, optional);
+
+        let (narrow_visible, narrow_probe) = fitted_graph_demand(&frame, 242, 450);
+        assert_eq!(narrow_visible, visible);
+        assert_eq!(
+            narrow_probe.iter().collect::<Vec<_>>(),
+            vec![Metric::Io, Metric::Vpu, Metric::Gpu]
         );
     }
 

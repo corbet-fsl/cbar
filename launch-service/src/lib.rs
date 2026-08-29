@@ -168,7 +168,7 @@ impl LaunchWorker {
         for index in 0..worker_count {
             let thread_queue = queue.clone();
             if thread::Builder::new()
-                .name(format!("ironbar-launch-worker-{index}"))
+                .name(format!("cbar-launch-worker-{index}"))
                 .spawn(move || launch_worker(thread_queue))
                 .is_err()
             {
@@ -586,7 +586,7 @@ fn start_capability_probe(environment_names: Vec<String>, probe_executable: Stri
     };
 
     let started = thread::Builder::new()
-        .name("ironbar-user-service-probe".to_string())
+        .name("cbar-user-service-probe".to_string())
         .spawn(move || {
             let mut command = user_service_command(&probe_executable, &[], &environment_names);
             configure_child(&mut command);
@@ -604,7 +604,7 @@ fn start_capability_probe(environment_names: Vec<String>, probe_executable: Stri
     }
 
     let watchdog_started = thread::Builder::new()
-        .name("ironbar-user-service-watchdog".to_string())
+        .name("cbar-user-service-watchdog".to_string())
         .spawn(move || {
             thread::sleep(USER_SERVICE_RESOLUTION_TIMEOUT);
             shared.mark_probe_stalled(generation);
@@ -894,7 +894,7 @@ impl DirectReaper {
         #[cfg(target_os = "linux")]
         let thread_wake = wake.clone();
         thread::Builder::new()
-            .name("ironbar-child-reaper".to_string())
+            .name("cbar-child-reaper".to_string())
             .spawn(move || {
                 reap_children(
                     rx,

@@ -57,16 +57,16 @@ fn install_tracing(debug: bool) -> Result<WorkerGuard> {
     let default_log = if debug { "debug" } else { "info" };
 
     let filter_layer =
-        EnvFilter::try_from_env("IRONBAR_LOG").or_else(|_| EnvFilter::try_new(default_log))?;
+        EnvFilter::try_from_env("CBAR_LOG").or_else(|_| EnvFilter::try_new(default_log))?;
 
-    let file_filter_layer = EnvFilter::try_from_env("IRONBAR_FILE_LOG")
+    let file_filter_layer = EnvFilter::try_from_env("CBAR_FILE_LOG")
         .or_else(|_| EnvFilter::try_new(DEFAULT_FILE_LOG))?;
 
-    let log_path = data_dir().unwrap_or(env::current_dir()?).join("ironbar");
+    let log_path = data_dir().unwrap_or(env::current_dir()?).join("cbar");
 
     let appender = tracing_appender::rolling::Builder::new()
         .rotation(Rotation::DAILY)
-        .filename_prefix("ironbar")
+        .filename_prefix("cbar")
         .filename_suffix("log")
         .max_log_files(3)
         .build(log_path)?;

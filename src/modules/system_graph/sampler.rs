@@ -15,6 +15,9 @@ const NETWORK_FADE_FRAMES: u8 = 3;
 // shorter than one frame is inherently below the graph's temporal resolution;
 // jobs lasting at least one frame must leave a history sample.
 const DRM_INTERVAL_NS: u64 = SAMPLE_INTERVAL_MS * 1_000_000;
+// Filesystem topology changes are human-scale events. Keep them out of the
+// 500ms history path while bounding hotplug discovery for a fitted cell.
+const TOPOLOGY_DISCOVERY_NS: u64 = 5_000_000_000;
 // Native open events trigger immediate client inventory. This periodic pass is
 // only a safety net for a lost event or a replaced watch.
 const DRM_LINK_REVALIDATE_NS: u64 = 30_000_000_000;
@@ -38,6 +41,12 @@ impl Default for Roots {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ProbeCounts {
+    pub hot_samples: usize,
+    pub capability_passes: usize,
+    pub drm_topology_scans: usize,
+    pub disk_topology_scans: usize,
+    pub npu_topology_scans: usize,
+    pub network_topology_scans: usize,
     pub drm_discovery_scans: usize,
     pub drm_sample_scans: usize,
     pub drm_fd_link_reads: usize,
@@ -48,6 +57,33 @@ pub struct ProbeCounts {
 enum EngineFamily {
     Gpu,
     Vpu,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum DiscoveryGroup {
+    Disk,
+    Drm,
+    Npu,
+    Network,
+}
+
+impl DiscoveryGroup {
+    const ALL: [Self; 4] = [Self::Disk, Self::Drm, Self::Npu, Self::Network];
+
+    const fn metrics(self) -> MetricSet {
+        let bits = match self {
+            Self::Disk => 1 << Metric::Io as u8,
+            Self::Drm => (1 << Metric::Vpu as u8) | (1 << Metric::Gpu as u8),
+            Self::Npu => 1 << Metric::Npu as u8,
+            Self::Network => {
+                (1 << Metric::Lan as u8)
+                    | (1 << Metric::Wlan as u8)
+                    | (1 << Metric::Wwan as u8)
+                    | (1 << Metric::Vpn as u8)
+            }
+        };
+        MetricSet::from_bits(bits)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -124,21 +160,6 @@ struct NetworkInterface {
     name: String,
     metric: Metric,
     path: PathBuf,
-    active: bool,
-}
-
-#[derive(Debug)]
-struct Diskstats {
-    content: String,
-    whole_devices: HashSet<String>,
-}
-
-#[derive(Debug)]
-struct CheapSources {
-    memory: Option<MemorySample>,
-    diskstats: Option<Diskstats>,
-    npu_samples: Vec<(PathBuf, u64)>,
-    interfaces: Vec<NetworkInterface>,
 }
 
 #[derive(Debug)]
@@ -152,9 +173,14 @@ pub struct Sampler {
     drm_vpu_capable: bool,
     drm_gpu_devices: HashSet<String>,
     drm_vpu_devices: HashSet<String>,
+    drm_topology: HashSet<String>,
     drm_gpu_instances: usize,
     drm_vpu_instances: usize,
-    direct_gpu_samples: Vec<(PathBuf, f64)>,
+    disk_devices: HashSet<String>,
+    direct_gpu_paths: Vec<PathBuf>,
+    npu_paths: Vec<PathBuf>,
+    network_interfaces: Vec<NetworkInterface>,
+    topology_discovered_at_ns: HashMap<DiscoveryGroup, u64>,
     cpu_previous: Option<(u64, u64)>,
     io_previous: HashMap<String, TimedCounter>,
     npu_previous: HashMap<PathBuf, TimedCounter>,
@@ -199,9 +225,14 @@ impl Sampler {
             drm_vpu_capable: false,
             drm_gpu_devices: HashSet::new(),
             drm_vpu_devices: HashSet::new(),
+            drm_topology: HashSet::new(),
             drm_gpu_instances: 0,
             drm_vpu_instances: 0,
-            direct_gpu_samples: Vec::new(),
+            disk_devices: HashSet::new(),
+            direct_gpu_paths: Vec::new(),
+            npu_paths: Vec::new(),
+            network_interfaces: Vec::new(),
+            topology_discovered_at_ns: HashMap::new(),
             cpu_previous: None,
             io_previous: HashMap::new(),
             npu_previous: HashMap::new(),
@@ -254,6 +285,7 @@ impl Sampler {
 
     fn forget_drm_topology(&mut self) {
         self.idle_expensive_sources();
+        self.drm_topology.clear();
         self.drm_gpu_devices.clear();
         self.drm_vpu_devices.clear();
         self.sync_drm_capabilities();
@@ -293,13 +325,28 @@ impl Sampler {
         demand: MetricSet,
         probe: MetricSet,
     ) -> GraphFrame {
+        self.probes.hot_samples += 1;
         let now_ns = now.as_nanos().min(u128::from(u64::MAX)) as u64;
-        self.direct_gpu_samples = self.direct_gpu_samples();
-        let drm_topology = self.drm_topology_tokens();
-        self.retain_drm_capabilities(&drm_topology);
+        let interest = MetricSet::from_bits(demand.bits() | probe.bits());
+        self.refresh_topology(now_ns, interest);
+
+        let cpu_available = self.roots.proc.join("stat").is_file();
+        self.set_capability(Metric::Cpu, Provider::ProcStat, usize::from(cpu_available));
+        let memory = self.read_memory();
+        self.set_capability(
+            Metric::Ram,
+            Provider::ProcMeminfo,
+            usize::from(memory.is_some()),
+        );
+        self.set_capability(
+            Metric::Swap,
+            Provider::ProcMeminfo,
+            usize::from(memory.is_some_and(|memory| memory.swap_percent.is_some())),
+        );
+
         let mut drm_interest_bits =
             (probe.bits() | demand.bits()) & ((1 << Metric::Vpu as u8) | (1 << Metric::Gpu as u8));
-        if !self.direct_gpu_samples.is_empty() {
+        if !self.direct_gpu_paths.is_empty() {
             drm_interest_bits &= !(1 << Metric::Gpu as u8);
         }
         let drm_discovery_due = self
@@ -311,21 +358,18 @@ impl Sampler {
         }
         if drm_interest_bits & (1 << Metric::Gpu as u8) != 0
             && !self.drm_gpu_capable
-            && self.direct_gpu_samples.is_empty()
+            && self.direct_gpu_paths.is_empty()
         {
             missing_interesting_drm.insert(Metric::Gpu);
         }
         let visible_drm_due = ((demand.contains(Metric::Vpu) && self.drm_vpu_capable)
             || (demand.contains(Metric::Gpu)
                 && self.drm_gpu_capable
-                && self.direct_gpu_samples.is_empty()))
+                && self.direct_gpu_paths.is_empty()))
             && self
                 .drm_sampled_at_ns
                 .is_none_or(|previous| now_ns.saturating_sub(previous) >= DRM_INTERVAL_NS);
-        let has_drm_topology = !drm_topology.is_empty();
-        if !has_drm_topology {
-            self.forget_drm_topology();
-        }
+        let has_drm_topology = !self.drm_topology.is_empty();
         let drm_inventory_due =
             has_drm_topology && drm_interest_bits != 0 && self.drm_inventory_due(now_ns);
         if has_drm_topology
@@ -338,15 +382,13 @@ impl Sampler {
             self.drm_discovered_at_ns = Some(now_ns);
         }
 
-        let sources = self.discover_cheap_sources(has_drm_topology);
-
         if demand.contains(Metric::Cpu)
             && let Some(value) = self.sample_cpu()
         {
             self.frame.push_scalar(Metric::Cpu, value, self.history_len);
         }
 
-        if let Some(memory) = sources.memory {
+        if let Some(memory) = memory {
             if demand.contains(Metric::Ram) {
                 self.frame
                     .push_scalar(Metric::Ram, memory.ram_percent, self.history_len);
@@ -359,7 +401,8 @@ impl Sampler {
         }
 
         if demand.contains(Metric::Io) {
-            if let Some(value) = self.sample_io(now_ns, sources.diskstats.as_ref()) {
+            let diskstats = self.read_diskstats();
+            if let Some(value) = self.sample_io(now_ns, diskstats.as_deref()) {
                 self.frame.push_scalar(Metric::Io, value, self.history_len);
             }
         } else {
@@ -367,23 +410,22 @@ impl Sampler {
         }
 
         if demand.contains(Metric::Npu) {
-            if let Some(value) = self.sample_npu(now_ns, &sources.npu_samples) {
+            if let Some(value) = self.sample_npu(now_ns) {
                 self.frame.push_scalar(Metric::Npu, value, self.history_len);
             }
         } else {
             self.npu_previous.clear();
         }
 
-        let direct_gpu = if demand.contains(Metric::Gpu) {
-            self.sample_direct_gpu()
-        } else {
-            None
-        };
+        let direct_gpu = demand
+            .contains(Metric::Gpu)
+            .then(|| self.sample_direct_gpu())
+            .flatten();
         if let Some(value) = direct_gpu {
             self.frame.push_scalar(Metric::Gpu, value, self.history_len);
         }
 
-        let need_drm_gpu = demand.contains(Metric::Gpu) && self.direct_gpu_samples.is_empty();
+        let need_drm_gpu = demand.contains(Metric::Gpu) && self.direct_gpu_paths.is_empty();
         let need_drm_vpu = demand.contains(Metric::Vpu);
         if need_drm_gpu || need_drm_vpu {
             let due = self
@@ -415,95 +457,122 @@ impl Sampler {
             self.drm_inventory_at_ns = None;
         }
 
-        self.sample_network(now_ns, &sources.interfaces, demand);
+        self.sample_network(now_ns, demand);
+        self.sync_frame_sets(now_ns);
         self.seed_available_scalar_views();
         self.frame.capabilities = self.capabilities();
         self.frame.clone()
     }
 
-    fn discover_cheap_sources(&mut self, has_drm_topology: bool) -> CheapSources {
-        self.capabilities.clear();
-        let mut available = MetricSet::empty();
-        let mut probeable = MetricSet::empty();
-        if has_drm_topology {
-            probeable.insert(Metric::Vpu);
-            probeable.insert(Metric::Gpu);
-        }
-        if self.roots.proc.join("stat").is_file() {
-            self.add_capability(Metric::Cpu, Provider::ProcStat, 1);
-            available.insert(Metric::Cpu);
-        }
-        let memory = self.read_memory();
-        if let Some(memory) = memory {
-            self.add_capability(Metric::Ram, Provider::ProcMeminfo, 1);
-            available.insert(Metric::Ram);
-            if memory.swap_percent.is_some() {
-                self.add_capability(Metric::Swap, Provider::ProcMeminfo, 1);
-                available.insert(Metric::Swap);
+    fn refresh_topology(&mut self, now_ns: u64, interest: MetricSet) {
+        let mut discovered = false;
+        for group in DiscoveryGroup::ALL {
+            if interest.bits() & group.metrics().bits() == 0 || !self.topology_due(group, now_ns) {
+                continue;
             }
+            match group {
+                DiscoveryGroup::Disk => self.discover_disk_topology(),
+                DiscoveryGroup::Drm => self.discover_drm_topology(),
+                DiscoveryGroup::Npu => self.discover_npu_topology(),
+                DiscoveryGroup::Network => self.discover_network_topology(),
+            }
+            self.topology_discovered_at_ns.insert(group, now_ns);
+            discovered = true;
         }
-        let diskstats = self.read_diskstats();
-        let block_devices = diskstats
-            .as_ref()
-            .map_or(0, |diskstats| diskstats.whole_devices.len());
-        if block_devices > 0 {
-            self.add_capability(Metric::Io, Provider::ProcDiskstats, block_devices);
-            available.insert(Metric::Io);
-        }
-        if !self.direct_gpu_samples.is_empty() {
-            self.add_capability(
-                Metric::Gpu,
-                Provider::DrmBusySysfs,
-                self.direct_gpu_samples.len(),
-            );
-        }
-        if self.drm_gpu_capable {
-            self.add_capability(
-                Metric::Gpu,
-                Provider::DrmFdinfo,
-                self.drm_gpu_instances.max(1),
-            );
-        }
-        if !self.direct_gpu_samples.is_empty() || self.drm_gpu_capable {
-            available.insert(Metric::Gpu);
-        }
-        if self.drm_vpu_capable {
-            self.add_capability(
-                Metric::Vpu,
-                Provider::DrmFdinfo,
-                self.drm_vpu_instances.max(1),
-            );
-            available.insert(Metric::Vpu);
-        }
-        let npu_samples = self.npu_samples();
-        if !npu_samples.is_empty() {
-            self.add_capability(Metric::Npu, Provider::NpuBusySysfs, npu_samples.len());
-            available.insert(Metric::Npu);
-        }
+        self.probes.capability_passes += usize::from(discovered);
+    }
 
-        let interfaces = self.network_interfaces();
-        for metric in Metric::NETWORK {
-            let count = interfaces
-                .iter()
-                .filter(|interface| interface.metric == metric)
-                .count();
-            if count > 0 {
-                self.add_capability(metric, Provider::NetworkSysfs, count);
-                available.insert(metric);
-            }
-        }
-        self.frame.available = available;
-        self.frame.probeable = probeable;
-        CheapSources {
-            memory,
-            diskstats,
-            npu_samples,
-            interfaces,
+    fn topology_due(&self, group: DiscoveryGroup, now_ns: u64) -> bool {
+        self.topology_discovered_at_ns
+            .get(&group)
+            .is_none_or(|previous| now_ns.saturating_sub(*previous) >= TOPOLOGY_DISCOVERY_NS)
+    }
+
+    fn discover_disk_topology(&mut self) {
+        self.probes.disk_topology_scans += 1;
+        self.disk_devices = if self.roots.proc.join("diskstats").is_file() {
+            fs::read_dir(self.roots.sys.join("block"))
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        self.set_capability(Metric::Io, Provider::ProcDiskstats, self.disk_devices.len());
+        if self.disk_devices.is_empty() {
+            self.io_previous.clear();
         }
     }
 
-    fn add_capability(&mut self, metric: Metric, provider: Provider, instances: usize) {
-        self.capabilities.insert((metric, provider), instances);
+    fn discover_drm_topology(&mut self) {
+        self.probes.drm_topology_scans += 1;
+        let topology = self.drm_topology_tokens();
+        self.retain_drm_capabilities(&topology);
+        self.drm_topology = topology;
+        self.direct_gpu_paths = self.direct_gpu_paths();
+        self.set_capability(
+            Metric::Gpu,
+            Provider::DrmBusySysfs,
+            self.direct_gpu_paths.len(),
+        );
+        if self.drm_topology.is_empty() {
+            self.forget_drm_topology();
+        }
+    }
+
+    fn discover_npu_topology(&mut self) {
+        self.probes.npu_topology_scans += 1;
+        self.npu_paths = self.npu_paths();
+        self.set_capability(Metric::Npu, Provider::NpuBusySysfs, self.npu_paths.len());
+        if self.npu_paths.is_empty() {
+            self.npu_previous.clear();
+        }
+    }
+
+    fn discover_network_topology(&mut self) {
+        self.probes.network_topology_scans += 1;
+        self.network_interfaces = self.network_interfaces();
+        for metric in Metric::NETWORK {
+            let count = self
+                .network_interfaces
+                .iter()
+                .filter(|interface| interface.metric == metric)
+                .count();
+            self.set_capability(metric, Provider::NetworkSysfs, count);
+        }
+    }
+
+    fn sync_frame_sets(&mut self, now_ns: u64) {
+        self.frame.available = self
+            .capabilities
+            .keys()
+            .map(|(metric, _)| *metric)
+            .collect();
+
+        let mut probeable = MetricSet::empty();
+        for group in DiscoveryGroup::ALL {
+            let drm_clients_need_probe =
+                group == DiscoveryGroup::Drm && !self.drm_topology.is_empty();
+            if !drm_clients_need_probe && !self.topology_due(group, now_ns) {
+                continue;
+            }
+            for metric in group.metrics().iter() {
+                if !self.frame.available.contains(metric) {
+                    probeable.insert(metric);
+                }
+            }
+        }
+        self.frame.probeable = probeable;
+    }
+
+    fn set_capability(&mut self, metric: Metric, provider: Provider, instances: usize) {
+        if instances == 0 {
+            self.capabilities.remove(&(metric, provider));
+        } else {
+            self.capabilities.insert((metric, provider), instances);
+        }
     }
 
     fn seed_available_scalar_views(&mut self) {
@@ -561,7 +630,7 @@ impl Sampler {
             self.drm_current_vpu = self.drm_vpu_capable.then_some(0.0);
         }
         debug!(
-            gpu = self.drm_gpu_capable || !self.direct_gpu_samples.is_empty(),
+            gpu = self.drm_gpu_capable || !self.direct_gpu_paths.is_empty(),
             vpu = self.drm_vpu_capable,
             "discovered native DRM graph sources"
         );
@@ -592,6 +661,8 @@ impl Sampler {
         self.drm_vpu_capable = !self.drm_vpu_devices.is_empty();
         self.drm_gpu_instances = self.drm_gpu_devices.len();
         self.drm_vpu_instances = self.drm_vpu_devices.len();
+        self.set_capability(Metric::Gpu, Provider::DrmFdinfo, self.drm_gpu_instances);
+        self.set_capability(Metric::Vpu, Provider::DrmFdinfo, self.drm_vpu_instances);
     }
 
     fn sample_cpu(&mut self) -> Option<f64> {
@@ -626,33 +697,21 @@ impl Sampler {
         memory_from_str(&content)
     }
 
-    fn read_diskstats(&self) -> Option<Diskstats> {
-        let content = fs::read_to_string(self.roots.proc.join("diskstats")).ok()?;
-        // `/sys/block` is the kernel's topology-neutral inventory of whole
-        // block devices. Requiring a `device` symlink would incorrectly drop
-        // valid device-mapper, md, loop, zram and other virtual block devices.
-        let whole_devices = fs::read_dir(self.roots.sys.join("block"))
-            .ok()?
-            .filter_map(Result::ok)
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect();
-        Some(Diskstats {
-            content,
-            whole_devices,
-        })
+    fn read_diskstats(&self) -> Option<String> {
+        fs::read_to_string(self.roots.proc.join("diskstats")).ok()
     }
 
-    fn sample_io(&mut self, now_ns: u64, diskstats: Option<&Diskstats>) -> Option<f64> {
+    fn sample_io(&mut self, now_ns: u64, diskstats: Option<&str>) -> Option<f64> {
         let diskstats = diskstats?;
         let mut busiest = None::<f64>;
         let mut seen = HashSet::new();
-        for line in diskstats.content.lines() {
+        for line in diskstats.lines() {
             let fields: Vec<_> = line.split_whitespace().collect();
             if fields.len() < 13 {
                 continue;
             }
             let name = fields[2];
-            if !diskstats.whole_devices.contains(name) {
+            if !self.disk_devices.contains(name) {
                 continue;
             }
             let Ok(ticks_ms) = fields[12].parse::<u64>() else {
@@ -673,7 +732,7 @@ impl Sampler {
         busiest
     }
 
-    fn direct_gpu_samples(&self) -> Vec<(PathBuf, f64)> {
+    fn direct_gpu_paths(&self) -> Vec<PathBuf> {
         let Ok(cards) = fs::read_dir(self.roots.sys.join("class/drm")) else {
             return Vec::new();
         };
@@ -681,9 +740,9 @@ impl Sampler {
             .filter_map(Result::ok)
             .filter(|entry| numeric_name(&entry.file_name().to_string_lossy(), "card"))
             .map(|entry| entry.path().join("device/gpu_busy_percent"))
-            .filter_map(|path| read_u64(&path).map(|value| (path, value.min(100) as f64)))
+            .filter(|path| read_u64(path).is_some())
             .collect();
-        files.sort_by(|left, right| left.0.cmp(&right.0));
+        files.sort();
         files
     }
 
@@ -730,36 +789,39 @@ impl Sampler {
     }
 
     fn sample_direct_gpu(&self) -> Option<f64> {
-        self.direct_gpu_samples
+        self.direct_gpu_paths
             .iter()
-            .map(|(_, value)| *value)
+            .filter_map(|path| read_u64(path).map(|value| value.min(100) as f64))
             .reduce(f64::max)
     }
 
-    fn npu_samples(&self) -> Vec<(PathBuf, u64)> {
+    fn npu_paths(&self) -> Vec<PathBuf> {
         let Ok(accels) = fs::read_dir(self.roots.sys.join("class/accel")) else {
             return Vec::new();
         };
         let mut files: Vec<_> = accels
             .filter_map(Result::ok)
             .map(|entry| entry.path().join("device/npu_busy_time_us"))
-            .filter_map(|path| read_u64(&path).map(|value| (path, value)))
+            .filter(|path| read_u64(path).is_some())
             .collect();
-        files.sort_by(|left, right| left.0.cmp(&right.0));
+        files.sort();
         files
     }
 
-    fn sample_npu(&mut self, now_ns: u64, samples: &[(PathBuf, u64)]) -> Option<f64> {
+    fn sample_npu(&mut self, now_ns: u64) -> Option<f64> {
         let mut busiest = None::<f64>;
         let mut seen = HashSet::new();
-        for (path, value_us) in samples {
+        for path in &self.npu_paths {
+            let Some(value_us) = read_u64(path) else {
+                continue;
+            };
             seen.insert(path.clone());
             let current = TimedCounter {
-                value: *value_us,
+                value: value_us,
                 at_ns: now_ns,
             };
             if let Some(previous) = self.npu_previous.insert(path.clone(), current)
-                && let Some(value) = timed_percent(previous, *value_us, now_ns, 1_000)
+                && let Some(value) = timed_percent(previous, value_us, now_ns, 1_000)
             {
                 busiest = Some(busiest.map_or(value, |best| best.max(value)));
             }
@@ -913,10 +975,11 @@ impl Sampler {
         interfaces
     }
 
-    fn sample_network(&mut self, now_ns: u64, interfaces: &[NetworkInterface], demand: MetricSet) {
+    fn sample_network(&mut self, now_ns: u64, demand: MetricSet) {
         let mut names_seen = HashSet::new();
         for metric in Metric::NETWORK {
-            let candidates: Vec<_> = interfaces
+            let candidates: Vec<_> = self
+                .network_interfaces
                 .iter()
                 .filter(|interface| interface.metric == metric)
                 .collect();
@@ -942,11 +1005,20 @@ impl Sampler {
                     self.network_previous_tx.remove(&interface.name);
                 }
 
+                // Preserve the one metadata view seeded when topology was
+                // discovered. Hidden categories do not need link-state reads,
+                // rotation bookkeeping or cloned frame updates every 500ms;
+                // all of those refresh on the first demanded sample.
+                if self.frame.network.contains_key(&metric) {
+                    continue;
+                }
+
                 // Availability and layout are produced before GTK can publish
                 // demand for a newly discovered category. Keep a zero-rate
                 // metadata view so that first frame paints the category label
                 // instead of reserving a blank cell. No traffic counters are
                 // read until the fitted canvas actually demands this metric.
+                let selected_active = network_active(&selected.path, selected.metric);
                 let history = self
                     .network_histories
                     .entry(selected.name.clone())
@@ -959,7 +1031,7 @@ impl Sampler {
                     });
                 history.index = slot + 1;
                 history.total = candidates.len();
-                history.active = selected.active;
+                history.active = selected_active;
                 self.network_selected.insert(metric, selected.name.clone());
                 self.network_previous_selected.remove(&metric);
                 self.network_fade.remove(&metric);
@@ -975,6 +1047,10 @@ impl Sampler {
             }
 
             for (index, interface) in candidates.iter().enumerate() {
+                // Link state is mutable runtime data, not topology. Refresh it
+                // at the visible 500ms cadence while keeping classification,
+                // routes and interface inventory on the slow discovery path.
+                let active = network_active(&interface.path, interface.metric);
                 let counters = read_u64(&interface.path.join("statistics/rx_bytes"))
                     .zip(read_u64(&interface.path.join("statistics/tx_bytes")));
                 let (rx_rate, tx_rate) = if let Some((rx, tx)) = counters {
@@ -998,13 +1074,9 @@ impl Sampler {
                     });
                 history.index = index + 1;
                 history.total = candidates.len();
-                history.active = interface.active;
-                history
-                    .rx
-                    .push(if interface.active { rx_rate } else { 0.0 });
-                history
-                    .tx
-                    .push(if interface.active { tx_rate } else { 0.0 });
+                history.active = active;
+                history.rx.push(if active { rx_rate } else { 0.0 });
+                history.tx.push(if active { tx_rate } else { 0.0 });
             }
 
             let selected = selected.name.clone();
@@ -1288,13 +1360,7 @@ fn classify_network(path: PathBuf, primary_routes: &HashSet<String>) -> Option<N
         _ if link_type.trim() == "65534" => Metric::Vpn,
         _ => return None,
     };
-    let active = network_active(&path, metric);
-    Some(NetworkInterface {
-        name,
-        metric,
-        path,
-        active,
-    })
+    Some(NetworkInterface { name, metric, path })
 }
 
 fn network_active(path: &Path, metric: Metric) -> bool {
@@ -1490,7 +1556,7 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let root = env::temp_dir().join(format!(
-                "ironbar-system-graph-{}-{}",
+                "cbar-system-graph-{}-{}",
                 std::process::id(),
                 NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
             ));
@@ -1728,7 +1794,7 @@ mod tests {
         fixture.write("sys/class/accel/accel1/device/npu_busy_time_us", "200\n");
 
         let mut sampler = Sampler::new(fixture.roots.clone(), 4, 30);
-        let demand: MetricSet = [Metric::Gpu, Metric::Npu].into_iter().collect();
+        let demand: MetricSet = [Metric::Io, Metric::Gpu, Metric::Npu].into_iter().collect();
         sampler.sample(Duration::from_secs(1), demand);
         fixture.write("sys/class/accel/accel0/device/npu_busy_time_us", "500100\n");
         fixture.write("sys/class/accel/accel1/device/npu_busy_time_us", "250200\n");
@@ -1772,6 +1838,234 @@ mod tests {
         assert_eq!(sampler.probe_counts().drm_sample_scans, 0);
         assert_eq!(sampler.probe_counts().drm_fd_link_reads, 0);
         assert_eq!(sampler.probe_counts().drm_fdinfo_reads, 0);
+    }
+
+    #[test]
+    fn wide_cold_canvas_discovers_every_fitted_optional_group_without_blank_cells() {
+        let fixture = Fixture::new();
+        basic_proc(&fixture);
+        fixture.write(
+            "proc/meminfo",
+            "MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 400 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n",
+        );
+        fixture.write("proc/diskstats", "8 0 sda 0 0 0 0 0 0 0 0 0 100 0 0\n");
+        fs::create_dir_all(fixture.root.join("sys/block/sda"))
+            .expect("whole block fixture should be created");
+        fixture.write("sys/class/drm/card0/device/gpu_busy_percent", "10\n");
+        fixture.write("dev/dri/renderD128", "");
+        fixture.write(
+            "proc/81/fdinfo/5",
+            "drm-driver: portable\ndrm-client-id: 3\ndrm-device: renderD128\ndrm-engine-video-decode: 100 ns\n",
+        );
+        fixture.write("sys/class/accel/accel0/device/npu_busy_time_us", "100\n");
+        for spec in [
+            NetworkFixture {
+                name: "wired",
+                devtype: "",
+                state: "up",
+                carrier: "1",
+                link_type: "1",
+                rx: 0,
+                tx: 0,
+                physical: true,
+            },
+            NetworkFixture {
+                name: "radio",
+                devtype: "wlan",
+                state: "up",
+                carrier: "1",
+                link_type: "1",
+                rx: 0,
+                tx: 0,
+                physical: false,
+            },
+            NetworkFixture {
+                name: "mobile",
+                devtype: "wwan",
+                state: "up",
+                carrier: "1",
+                link_type: "65534",
+                rx: 0,
+                tx: 0,
+                physical: false,
+            },
+            NetworkFixture {
+                name: "mesh",
+                devtype: "wireguard",
+                state: "unknown",
+                carrier: "0",
+                link_type: "65534",
+                rx: 0,
+                tx: 0,
+                physical: false,
+            },
+        ] {
+            fixture.network(spec);
+        }
+
+        let core: MetricSet = [Metric::Cpu, Metric::Ram].into_iter().collect();
+        let optional: MetricSet = [
+            Metric::Io,
+            Metric::Vpu,
+            Metric::Gpu,
+            Metric::Npu,
+            Metric::Lan,
+            Metric::Wlan,
+            Metric::Wwan,
+            Metric::Vpn,
+        ]
+        .into_iter()
+        .collect();
+        let mut sampler = Sampler::new(fixture.roots.clone(), 4, 30);
+        let cold = sampler.sample(Duration::from_secs(1), core);
+        assert_eq!(cold.available, core);
+        assert_eq!(cold.probeable, optional);
+
+        let (visible, probe) = super::super::fitted_graph_demand(&cold, 242, 1920);
+        assert_eq!(visible.demand, core);
+        assert_eq!(visible.cells.len(), 2);
+        assert_eq!(probe, optional);
+
+        let discovered = sampler.sample_with_probe(Duration::from_millis(1_500), core, probe);
+        for metric in optional.iter() {
+            assert!(
+                discovered.available.contains(metric),
+                "{} should be discovered from wide cold capacity",
+                metric.label()
+            );
+        }
+        let counts = sampler.probe_counts();
+        assert_eq!(counts.capability_passes, 1);
+        assert_eq!(counts.disk_topology_scans, 1);
+        assert_eq!(counts.drm_topology_scans, 1);
+        assert_eq!(counts.npu_topology_scans, 1);
+        assert_eq!(counts.network_topology_scans, 1);
+    }
+
+    #[test]
+    fn fitted_probe_discovers_only_its_due_topology_group() {
+        let fixture = Fixture::new();
+        basic_proc(&fixture);
+        fixture.write("proc/diskstats", "8 0 sda 0 0 0 0 0 0 0 0 0 100 0 0\n");
+        fs::create_dir_all(fixture.root.join("sys/block/sda"))
+            .expect("whole block fixture should be created");
+        fixture.write("sys/class/accel/accel0/device/npu_busy_time_us", "100\n");
+        fixture.network(NetworkFixture {
+            name: "wired",
+            devtype: "",
+            state: "up",
+            carrier: "1",
+            link_type: "1",
+            rx: 0,
+            tx: 0,
+            physical: true,
+        });
+        fixture.write("dev/dri/renderD128", "");
+
+        let core: MetricSet = [Metric::Cpu, Metric::Ram].into_iter().collect();
+        let io: MetricSet = [Metric::Io].into_iter().collect();
+        let mut sampler = Sampler::new(fixture.roots.clone(), 4, 30);
+        let initial = sampler.sample(Duration::from_secs(1), core);
+        assert!(initial.probeable.contains(Metric::Io));
+        assert!(initial.probeable.contains(Metric::Npu));
+        assert_eq!(sampler.probe_counts().capability_passes, 0);
+
+        let discovered = sampler.sample_with_probe(Duration::from_secs(2), core, io);
+        assert!(discovered.available.contains(Metric::Io));
+        let counts = sampler.probe_counts();
+        assert_eq!(counts.capability_passes, 1);
+        assert_eq!(counts.disk_topology_scans, 1);
+        assert_eq!(counts.drm_topology_scans, 0);
+        assert_eq!(counts.npu_topology_scans, 0);
+        assert_eq!(counts.network_topology_scans, 0);
+
+        sampler.sample_with_probe(Duration::from_secs(4), core, io);
+        assert_eq!(sampler.probe_counts().disk_topology_scans, 1);
+        sampler.sample_with_probe(Duration::from_secs(7), core, io);
+        assert_eq!(sampler.probe_counts().disk_topology_scans, 2);
+    }
+
+    #[test]
+    fn absent_hotplug_is_reprobed_on_the_discovery_clock() {
+        let fixture = Fixture::new();
+        basic_proc(&fixture);
+        let core: MetricSet = [Metric::Cpu, Metric::Ram].into_iter().collect();
+        let npu: MetricSet = [Metric::Npu].into_iter().collect();
+        let mut sampler = Sampler::new(fixture.roots.clone(), 4, 30);
+
+        let absent = sampler.sample_with_probe(Duration::from_secs(1), core, npu);
+        assert!(!absent.available.contains(Metric::Npu));
+        assert!(!absent.probeable.contains(Metric::Npu));
+        fixture.write("sys/class/accel/accel0/device/npu_busy_time_us", "100\n");
+
+        let not_due = sampler.sample(Duration::from_secs(5), core);
+        assert!(!not_due.probeable.contains(Metric::Npu));
+        let due = sampler.sample(Duration::from_secs(6), core);
+        assert!(due.probeable.contains(Metric::Npu));
+        let discovered = sampler.sample_with_probe(Duration::from_secs(6), core, npu);
+        assert!(discovered.available.contains(Metric::Npu));
+        assert_eq!(sampler.probe_counts().npu_topology_scans, 2);
+    }
+
+    #[test]
+    #[ignore = "manual deterministic server-only cost evidence"]
+    fn manual_core_demand_cost_evidence() {
+        const SAMPLES: usize = 500;
+
+        let fixture = Fixture::new();
+        basic_proc(&fixture);
+        let mut diskstats = String::new();
+        for index in 0..64 {
+            let name = format!("vd{index}");
+            fs::create_dir_all(fixture.root.join("sys/block").join(&name))
+                .expect("synthetic block device should be created");
+            diskstats.push_str(&format!("8 {index} {name} 0 0 0 0 0 0 0 0 0 {index} 0 0\n"));
+        }
+        fixture.write("proc/diskstats", &diskstats);
+        for index in 0..32 {
+            fixture.write(
+                &format!("sys/class/drm/card{index}/device/gpu_busy_percent"),
+                "0\n",
+            );
+            fixture.write(
+                &format!("sys/class/accel/accel{index}/device/npu_busy_time_us"),
+                "0\n",
+            );
+        }
+        for index in 0..64 {
+            fixture.network(NetworkFixture {
+                name: &format!("wired-{index}"),
+                devtype: "",
+                state: "up",
+                carrier: "1",
+                link_type: "1",
+                rx: 0,
+                tx: 0,
+                physical: true,
+            });
+        }
+
+        let demand: MetricSet = [Metric::Cpu, Metric::Ram].into_iter().collect();
+        let mut sampler = Sampler::new(fixture.roots.clone(), 4, 30);
+        let started = Instant::now();
+        for tick in 1..=SAMPLES {
+            std::hint::black_box(sampler.sample(
+                Duration::from_millis(tick as u64 * SAMPLE_INTERVAL_MS),
+                demand,
+            ));
+        }
+        let elapsed = started.elapsed();
+        let counts = sampler.probe_counts();
+        eprintln!(
+            "SYSTEM_GRAPH_CORE_SAMPLES={SAMPLES} ELAPSED_US={} HOT_SAMPLES={} CAPABILITY_PASSES={} DRM_TOPOLOGY_SCANS={} DISK_TOPOLOGY_SCANS={} NPU_TOPOLOGY_SCANS={} NETWORK_TOPOLOGY_SCANS={}",
+            elapsed.as_micros(),
+            counts.hot_samples,
+            counts.capability_passes,
+            counts.drm_topology_scans,
+            counts.disk_topology_scans,
+            counts.npu_topology_scans,
+            counts.network_topology_scans,
+        );
     }
 
     #[cfg(unix)]
@@ -2047,6 +2341,86 @@ mod tests {
     }
 
     #[test]
+    fn demanded_network_link_state_refreshes_between_topology_passes() {
+        let fixture = Fixture::new();
+        basic_proc(&fixture);
+        fixture.network(NetworkFixture {
+            name: "radio-state",
+            devtype: "wlan",
+            state: "down",
+            carrier: "0",
+            link_type: "1",
+            rx: 100,
+            tx: 200,
+            physical: false,
+        });
+
+        let mut sampler = Sampler::new(fixture.roots.clone(), 4, 30);
+        let demand: MetricSet = [Metric::Wlan].into_iter().collect();
+        let down = sampler.sample(Duration::from_secs(1), demand);
+        assert!(!down.network[&Metric::Wlan].current.active);
+        assert_eq!(sampler.probe_counts().network_topology_scans, 1);
+
+        fixture.write("sys/class/net/radio-state/operstate", "up\n");
+        fixture.write("sys/class/net/radio-state/carrier", "1\n");
+        fixture.write("sys/class/net/radio-state/statistics/rx_bytes", "600");
+        let up = sampler.sample(Duration::from_millis(1_500), demand);
+        assert!(up.network[&Metric::Wlan].current.active);
+        assert_eq!(up.network[&Metric::Wlan].current.rx.current(), Some(1000.0));
+        assert_eq!(sampler.probe_counts().network_topology_scans, 1);
+
+        fixture.write("sys/class/net/radio-state/operstate", "down\n");
+        fixture.write("sys/class/net/radio-state/carrier", "0\n");
+        let down_again = sampler.sample(Duration::from_secs(2), demand);
+        assert!(!down_again.network[&Metric::Wlan].current.active);
+        assert_eq!(
+            down_again.network[&Metric::Wlan].current.rx.current(),
+            Some(0.0)
+        );
+        assert_eq!(sampler.probe_counts().network_topology_scans, 1);
+    }
+
+    #[test]
+    fn discovered_but_hidden_network_skips_link_state_refreshes() {
+        let fixture = Fixture::new();
+        basic_proc(&fixture);
+        fixture.network(NetworkFixture {
+            name: "hidden-wired",
+            devtype: "",
+            state: "up",
+            carrier: "1",
+            link_type: "1",
+            rx: 100,
+            tx: 200,
+            physical: true,
+        });
+
+        let mut sampler = Sampler::new(fixture.roots.clone(), 4, 30);
+        let core: MetricSet = [Metric::Cpu, Metric::Ram].into_iter().collect();
+        let lan: MetricSet = [Metric::Lan].into_iter().collect();
+        let discovered = sampler.sample_with_probe(Duration::from_secs(1), core, lan);
+        assert!(discovered.network[&Metric::Lan].current.active);
+
+        fs::remove_file(fixture.root.join("sys/class/net/hidden-wired/operstate"))
+            .expect("hidden link state fixture should be removable");
+        fs::remove_file(fixture.root.join("sys/class/net/hidden-wired/carrier"))
+            .expect("hidden carrier fixture should be removable");
+        let hidden = sampler.sample(Duration::from_millis(1_500), core);
+        assert!(
+            hidden.network[&Metric::Lan].current.active,
+            "hidden metadata should remain untouched until fitted demand returns"
+        );
+        assert_eq!(sampler.probe_counts().network_topology_scans, 1);
+
+        let visible = sampler.sample(Duration::from_secs(2), lan);
+        assert!(
+            !visible.network[&Metric::Lan].current.active,
+            "the first visible sample should refresh mutable link state"
+        );
+        assert_eq!(sampler.probe_counts().network_topology_scans, 1);
+    }
+
+    #[test]
     fn newly_present_lan_has_a_zero_view_before_counter_demand() {
         let fixture = Fixture::new();
         basic_proc(&fixture);
@@ -2063,7 +2437,8 @@ mod tests {
 
         let mut sampler = Sampler::new(fixture.roots.clone(), 4, 30);
         let core: MetricSet = [Metric::Cpu, Metric::Ram].into_iter().collect();
-        let frame = sampler.sample(Duration::from_secs(1), core);
+        let lan_probe: MetricSet = [Metric::Lan].into_iter().collect();
+        let frame = sampler.sample_with_probe(Duration::from_secs(1), core, lan_probe);
         assert!(frame.available.contains(Metric::Lan));
         let lan = &frame.network[&Metric::Lan].current;
         assert_eq!(lan.name, "arbitrary-wired");
@@ -2075,7 +2450,9 @@ mod tests {
 
         fs::remove_dir_all(fixture.root.join("sys/class/net/arbitrary-wired"))
             .expect("LAN fixture should be removable");
-        let absent = sampler.sample(Duration::from_secs(2), core);
+        let cached = sampler.sample_with_probe(Duration::from_secs(2), core, lan_probe);
+        assert!(cached.available.contains(Metric::Lan));
+        let absent = sampler.sample_with_probe(Duration::from_secs(6), core, lan_probe);
         assert!(!absent.available.contains(Metric::Lan));
         assert!(!absent.network.contains_key(&Metric::Lan));
     }

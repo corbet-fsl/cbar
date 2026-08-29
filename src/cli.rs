@@ -28,10 +28,10 @@ pub struct Args {
     pub debug: bool,
 
     /// Specify the path to the config file to use.
-    #[arg(short('c'), long, env = "IRONBAR_CONFIG")]
+    #[arg(short('c'), long, env = "CBAR_CONFIG")]
     pub config: Option<ConfigLocation>,
 
-    #[arg(short('t'), long, env = "IRONBAR_CSS")]
+    #[arg(short('t'), long, env = "CBAR_CSS")]
     pub theme: Option<ConfigLocation>,
 
     /// Validate the loaded config and CSS path, and exit immediately.

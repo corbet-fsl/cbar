@@ -304,7 +304,7 @@ mod tests {
     impl RenderFixture {
         fn new() -> Self {
             let root = std::env::temp_dir().join(format!(
-                "ironbar-system-graph-render-{}-{}",
+                "cbar-system-graph-render-{}-{}",
                 std::process::id(),
                 NEXT_RENDER_FIXTURE.fetch_add(1, Ordering::Relaxed)
             ));

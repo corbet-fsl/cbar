@@ -189,6 +189,15 @@ impl Module<gtk::Box> for KeyboardModule {
             }
         });
 
+        let compositor = compositor::Compositor::current();
+        if !compositor.supports_keyboard_layout_client() {
+            debug!(
+                %compositor,
+                "Skipping keyboard layout client: compositor exposes no layout IPC"
+            );
+            return Ok(());
+        }
+
         match context.try_client::<dyn compositor::KeyboardLayoutClient>() {
             Ok(client) => {
                 {

@@ -1,11 +1,12 @@
 [package]
-name = "ironbar-launch-service"
+name = "cbar-launch-service"
 version = "0.1.0"
+publish = false
 edition = "2024"
 license = "MIT"
-description = "Bounded, shell-free application handoff for Ironbar modules"
+description = "Bounded, shell-free application handoff for Cbar modules"
 readme = "README.md"
-repository = "https://github.com/jakestanger/ironbar"
+repository = "https://github.com/corbet-labs/cbar"
 categories = ["gui"]
 keywords = ["launcher", "systemd", "desktop", "wayland"]
 

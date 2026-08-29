@@ -37,7 +37,7 @@ impl Ipc {
         let path = self.path.clone();
 
         if path.exists() {
-            warn!("Socket already exists. Did Ironbar exit abruptly?");
+            warn!("Socket already exists. Did Cbar exit abruptly?");
             warn!("Attempting IPC shutdown to allow binding to address");
             if let Err(err) = Self::remove_socket(&path) {
                 error!(
@@ -269,7 +269,7 @@ mod tests {
     fn test_path(name: &str) -> std::path::PathBuf {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         std::env::temp_dir().join(format!(
-            "ironbar-ipc-{name}-{}-{}",
+            "cbar-ipc-{name}-{}-{}",
             std::process::id(),
             NEXT_ID.fetch_add(1, Ordering::Relaxed)
         ))

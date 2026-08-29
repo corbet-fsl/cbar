@@ -23,6 +23,7 @@
 // an honest empty launcher; rich fixture data exists only in core tests.
 use gtk4 as gtk;
 
+use cbar_launch_service::{submit_detached_batch, warm_launch_service};
 use gtk::gdk::{Key, ModifierType};
 use gtk::prelude::*;
 use gtk::{
@@ -30,7 +31,6 @@ use gtk::{
     Label, Orientation,
 };
 use gtk4_layer_shell::{KeyboardMode, Layer, LayerShell};
-use ironbar_launch_service::{submit_detached_batch, warm_launch_service};
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;

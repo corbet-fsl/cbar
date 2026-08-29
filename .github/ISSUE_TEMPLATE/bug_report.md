@@ -23,7 +23,7 @@ Steps to reproduce the behavior:
 **System information:**
 - Distro: [e.g. Arch Linux, Ubuntu 22.10]
 - Compositor: [e.g. Sway]
-- Ironbar version: [e.g. 0.16.1]
+- Cbar version: [e.g. 0.1.0]
 
 **Configuration**
 <!-- Share your bar configuration and stylesheet as applicable: -->

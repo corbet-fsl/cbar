@@ -15,10 +15,10 @@ These present their values inside read-only namespaces.
 Some examples below:
 
 ```shell
-ironbar var list
-ironbar var list sysinfo
-ironbar var list sysinfo.disk_percent
-ironbar var get sysinfo.disk_percent./home
-ironbar var get sysinfo.disk_percent.mean
-ironbar var get sysinfo.memory_percent 
+cbar var list
+cbar var list sysinfo
+cbar var list sysinfo.disk_percent
+cbar var get sysinfo.disk_percent./home
+cbar var get sysinfo.disk_percent.mean
+cbar var get sysinfo.memory_percent
 ```

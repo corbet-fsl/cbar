@@ -52,7 +52,7 @@ impl<T> AsyncIo for T where T: AsyncRead + AsyncWrite + Send + Unpin {}
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("neither SWAYSOCK nor I3SOCK is set")]
+    #[error("none of SCROLLSOCK, SWAYSOCK, or I3SOCK is set")]
     MissingSocket,
     #[error("failed to connect to Sway IPC socket {path:?}: {source}")]
     Connect {
@@ -998,15 +998,21 @@ fn next_retry(current: Duration) -> Duration {
 }
 
 fn sway_socket_path() -> Result<PathBuf> {
-    socket_path_from_values(std::env::var_os("SWAYSOCK"), std::env::var_os("I3SOCK"))
+    socket_path_from_values(
+        std::env::var_os("SCROLLSOCK"),
+        std::env::var_os("SWAYSOCK"),
+        std::env::var_os("I3SOCK"),
+    )
 }
 
 fn socket_path_from_values(
+    scrollsock: Option<OsString>,
     swaysock: Option<OsString>,
     i3sock: Option<OsString>,
 ) -> Result<PathBuf> {
-    swaysock
+    scrollsock
         .filter(|path| !path.is_empty())
+        .or_else(|| swaysock.filter(|path| !path.is_empty()))
         .or_else(|| i3sock.filter(|path| !path.is_empty()))
         .map(PathBuf::from)
         .ok_or(Error::MissingSocket)
@@ -1150,22 +1156,32 @@ mod tests {
     }
 
     #[test]
-    fn socket_path_prefers_sway_and_falls_back_to_i3() {
+    fn socket_path_prefers_scroll_then_sway_then_i3() {
         assert_eq!(
             socket_path_from_values(
+                Some(OsString::from("/run/scroll.sock")),
                 Some(OsString::from("/run/sway.sock")),
                 Some(OsString::from("/run/i3.sock")),
             )
-            .expect("SWAYSOCK should win"),
+            .expect("SCROLLSOCK should win"),
+            PathBuf::from("/run/scroll.sock")
+        );
+        assert_eq!(
+            socket_path_from_values(
+                None,
+                Some(OsString::from("/run/sway.sock")),
+                Some(OsString::from("/run/i3.sock")),
+            )
+            .expect("SWAYSOCK should win over I3SOCK"),
             PathBuf::from("/run/sway.sock")
         );
         assert_eq!(
-            socket_path_from_values(None, Some(OsString::from("/run/i3.sock")))
+            socket_path_from_values(None, None, Some(OsString::from("/run/i3.sock")))
                 .expect("I3SOCK should be accepted"),
             PathBuf::from("/run/i3.sock")
         );
         assert!(matches!(
-            socket_path_from_values(Some(OsString::new()), None),
+            socket_path_from_values(Some(OsString::new()), Some(OsString::new()), None,),
             Err(Error::MissingSocket)
         ));
     }

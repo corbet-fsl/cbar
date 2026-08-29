@@ -62,7 +62,7 @@ in
   craneLib.buildPackage {
     inherit version;
 
-    pname = "ironbar";
+    pname = "cbar";
 
     # CI already handles checks
     doCheck = false;
@@ -131,28 +131,26 @@ in
 
     postInstall = ''
       mkdir -p target/completions
-      target/release/ironbar --print-completions bash > target/completions/ironbar.bash
-      target/release/ironbar --print-completions zsh > target/completions/_ironbar
-      target/release/ironbar --print-completions fish > target/completions/ironbar.fish
+      target/release/cbar --print-completions bash > target/completions/cbar.bash
+      target/release/cbar --print-completions zsh > target/completions/_cbar
+      target/release/cbar --print-completions fish > target/completions/cbar.fish
 
-      installShellCompletion --cmd ironbar \
-        --bash target/completions/ironbar.bash \
-        --fish target/completions/ironbar.fish \
-        --zsh target/completions/_ironbar
+      installShellCompletion --cmd cbar \
+        --bash target/completions/cbar.bash \
+        --fish target/completions/cbar.fish \
+        --zsh target/completions/_cbar
+
+      install -Dm644 LICENSE "$out/share/licenses/cbar/LICENSE"
+      install -Dm644 launcher-core/LICENSE \
+        "$out/share/licenses/cbar/LICENSE.nixlaunch"
+      install -Dm644 NOTICE "$out/share/doc/cbar/NOTICE"
     '';
 
-    passthru = {
-      updateScript = gnome.updateScript {
-        packageName = "ironbar";
-        attrPath = "gnome.ironbar";
-      };
-    };
-
     meta = {
-      homepage = "https://github.com/JakeStanger/ironbar";
-      description = "Customisable gtk-layer-shell wlroots/sway bar written in rust.";
+      homepage = "https://github.com/corbet-labs/cbar";
+      description = "Opinionated GTK4 desktop panel with an integrated launcher.";
       license = lib.licenses.mit;
       platforms = lib.platforms.linux;
-      mainProgram = "ironbar";
+      mainProgram = "cbar";
     };
   }

@@ -12,8 +12,8 @@ impl Ipc {
         let mut stream = match UnixStream::connect(&self.path).await {
             Ok(stream) => Ok(stream),
             Err(err) => Err(Report::new(err)
-                .wrap_err("Failed to connect to Ironbar IPC server")
-                .suggestion("Is Ironbar running?")),
+                .wrap_err("Failed to connect to Cbar IPC server")
+                .suggestion("Is Cbar running?")),
         }?;
 
         let mut write_buffer = serde_json::to_vec(&command)?;

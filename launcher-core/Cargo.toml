@@ -1,11 +1,12 @@
 [package]
 name = "cbar-launcher-core"
 version = "0.1.0"
+publish = false
 edition = "2024"
 license = "MIT"
 description = "Toolkit-independent model and configuration core for cbar's matrix launcher"
 readme = "README.md"
-repository = "https://github.com/jakestanger/ironbar"
+repository = "https://github.com/corbet-labs/cbar"
 categories = ["gui"]
 keywords = ["launcher", "desktop", "wayland"]
 

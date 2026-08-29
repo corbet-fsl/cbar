@@ -1,6 +1,6 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Run (GTK Debug)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
-    <option name="command" value="run --package ironbar --bin ironbar" />
+    <option name="command" value="run --package cbar --bin cbar" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <option name="channel" value="DEFAULT" />
     <option name="requiredFeatures" value="true" />
@@ -11,7 +11,7 @@
     <option name="backtrace" value="SHORT" />
     <envs>
       <env name="GTK_DEBUG" value="interactive" />
-      <env name="IRONBAR_CONFIG" value="examples/config.json" />
+      <env name="CBAR_CONFIG" value="examples/config.json" />
       <env name="RUST_LOG" value="debug" />
       <env name="PATH" value="/usr/local/bin:/usr/bin:$USER_HOME$/.local/share/npm/bin" />
     </envs>

@@ -30,7 +30,7 @@ impl Ipc {
 
         validate_runtime_dir(&runtime_dir, rustix::process::geteuid().as_raw())?;
 
-        let ipc_socket_file = runtime_dir.join("ironbar-ipc.sock");
+        let ipc_socket_file = runtime_dir.join("cbar-ipc.sock");
 
         if format!("{}", ipc_socket_file.display()).len() > 100 {
             warn!(
@@ -86,7 +86,7 @@ mod tests {
     fn test_path(name: &str) -> PathBuf {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         std::env::temp_dir().join(format!(
-            "ironbar-runtime-{name}-{}-{}",
+            "cbar-runtime-{name}-{}-{}",
             std::process::id(),
             NEXT_ID.fetch_add(1, Ordering::Relaxed)
         ))

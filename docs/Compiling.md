@@ -1,12 +1,12 @@
-You can compile Ironbar from source using `cargo`. 
+You can compile Cbar from source using `cargo`.
 Just clone the repo and build:
 
 ```sh
-git clone https://github.com/jakestanger/ironbar.git
-cd ironbar
+git clone https://github.com/corbet-labs/cbar.git
+cd cbar
 cargo build --locked --release
 # change path to wherever you want to install
-install target/release/ironbar ~/.local/bin/ironbar
+install target/release/cbar ~/.local/bin/cbar
 ```
 
 It is also recommended to install a [Nerd Font](https://www.nerdfonts.com/#home) for displaying symbols.
@@ -15,18 +15,6 @@ It is also recommended to install a [Nerd Font](https://www.nerdfonts.com/#home)
 
 To build from source, you must have GTK (>= 4.12) and GTK Layer Shell installed.
 You also need rust; only the latest stable version is supported.
-
-### Docker
-
-A docker image is available which includes all the requirements.
-
-<https://github.com/JakeStanger/ironbar/pkgs/container/ironbar-build>
-
-```shell
-docker run -it -v '.:/app' ghcr.io/jakestanger/ironbar-build /bin/bash
-$ cd app
-$ cargo build
-```
 
 ### Arch
 
@@ -146,6 +134,8 @@ cargo build --release --no-default-features \
 | music+mpd           | Enables the `music` module with MPD support.                                                                         |
 | network_manager     | Enables the `network_manager` module.                                                                                |
 | notifications       | Enables the `notiications` module.                                                                                   |
+| matrix_launcher     | Enables Cbar's integrated resident matrix launcher.                                                                 |
+| system_graph        | Enables Cbar's native responsive Cairo system graphs.                                                               |
 | sys_info            | Enables the `sys_info` module.                                                                                       |
 | script              | Enables the `script` module.                                                                                         |
 | tray                | Enables the `tray` module.                                                                                           |
@@ -155,34 +145,34 @@ cargo build --release --no-default-features \
 | workspaces+hyprland | Enables the `workspaces` module with support for Hyprland.                                                           |
 | workspaces+niri     | Enables the `workspaces` module with support for Niri.                                                               |
 | **Other**           |                                                                                                                      |
-| extra               | Enables JSON schema support, shell completion support, and the CLI `--print-schema` and `--print-completions` flags. |
+| extras              | Enables JSON schema support, shell completion support, and the CLI `--print-schema` and `--print-completions` flags. |
 | battery.test        | Enables the `battery` module with a mock client in place of the upower one.                                          |
 
 
 ## Shell completions
 
-Compiling Ironbar will produce shell completions for bash, zsh and fish; these can be found in `target/completions`.
+Compiling Cbar will produce shell completions for bash, zsh and fish; these can be found in `target/completions`.
 
 You can install these as follows:
 
 Bash: 
 ```shell
-install -Dm644 completions/ironbar.bash /usr/share/bash-completion/completions/ironbar
+install -Dm644 completions/cbar.bash /usr/share/bash-completion/completions/cbar
 ```
 
 Zsh:
 ```shell
-install -Dm644 completions/_ironbar /usr/share/zsh/site-functions/_ironbar
+install -Dm644 completions/_cbar /usr/share/zsh/site-functions/_cbar
 ```
 
 Fish:
 ```shell
-install -Dm644 completions/ironbar.fish /usr/share/fish/vendor_completions.d/ironbar.fish
+install -Dm644 completions/cbar.fish /usr/share/fish/vendor_completions.d/cbar.fish
 ```
 
 ## Speeding up compiling
 
-With the full feature set, Ironbar can take a good while to compile. 
+With the full feature set, Cbar can take a good while to compile.
 There are a couple of tricks which can be used to improve compile times.
 
 ## Linker 
@@ -214,7 +204,7 @@ rustc-wrapper = "/usr/bin/sccache"
 > The Cranelift backend is experimental and requires the use of the nightly compiler.
 > It is designed for development builds only.
 
-If working on the Ironbar codebase, you may see some benefit from using the [Cranelift](https://github.com/rust-lang/rustc_codegen_cranelift) compiler backend.
+If working on the Cbar codebase, you may see some benefit from using the [Cranelift](https://github.com/rust-lang/rustc_codegen_cranelift) compiler backend.
 This is known to shave a further few seconds off the compile time (bringing down from 10 to 7-8 on my own hardware).
 
 Firstly install the component:

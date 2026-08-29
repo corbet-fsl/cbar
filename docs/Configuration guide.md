@@ -23,7 +23,7 @@ Ironbar supports a range of configuration formats, so you can pick your favourit
 - `config.corn` (Includes variable support for re-using blocks.
   See [here](https://github.com/jakestanger/corn) for info)
 
-You can also override the default config path using the `IRONBAR_CONFIG` environment variable.
+You can also override the default config path using the `CBAR_CONFIG` environment variable.
 
 A hosted schema is available for the latest Git version ~~and each versioned release~~.
 JSON and YAML both support schema checking by adding the `$schema` key 

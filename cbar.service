@@ -4,5 +4,5 @@ After=graphical-session.target
 Requisite=graphical-session.target
 
 [Service]
-ExecStart=/usr/bin/ironbar
+ExecStart=/usr/bin/cbar
 Restart=on-failure
