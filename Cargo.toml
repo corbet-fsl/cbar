@@ -180,7 +180,7 @@ walkdir = "2.5.0"
 notify = { version = "8.2.0", default-features = false }
 wayland-client = "0.31.1"
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
-smithay-client-toolkit = { version = "0.20.0", default-features = false, features = [
+smithay-client-toolkit = { version = "0.21.1", default-features = false, features = [
     "calloop",
 ] }
 config = { version = "0.15.23", default-features = false }
