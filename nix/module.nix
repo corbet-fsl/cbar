@@ -7,6 +7,15 @@ self: {
   cfg = config.programs.cbar;
   defaultCbarPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
   jsonFormat = pkgs.formats.json {};
+  scriptFiles = lib.mapAttrs'
+    (name: content: lib.nameValuePair "cbar/scripts/${name}" {
+      text = content;
+      executable = true;
+    })
+    cfg.scripts;
+  assetFiles = lib.mapAttrs'
+    (name: content: lib.nameValuePair "cbar/${name}" {text = content;})
+    cfg.assets;
   inherit
     (lib)
     types
@@ -40,6 +49,38 @@ in {
       description = "The config to pass to cbar.";
     };
 
+    launcher = mkOption {
+      type = jsonFormat.type;
+      default = null;
+      description = "The integrated launcher's cbar-owned configuration.";
+    };
+
+    scripts = mkOption {
+      type = types.attrsOf types.lines;
+      default = {};
+      description = "Executable helper scripts written below the cbar config directory.";
+    };
+
+    assets = mkOption {
+      type = types.attrsOf types.lines;
+      default = {};
+      description = "Non-executable companion files written below the cbar config directory.";
+    };
+
+    configDir = mkOption {
+      type = types.str;
+      readOnly = true;
+      default = "${config.xdg.configHome}/cbar";
+      description = "The cbar configuration directory.";
+    };
+
+    scriptsDir = mkOption {
+      type = types.str;
+      readOnly = true;
+      default = "${config.xdg.configHome}/cbar/scripts";
+      description = "The cbar helper-script directory.";
+    };
+
     features = mkOption {
       type = types.listOf types.nonEmptyStr;
       default = [];
@@ -59,8 +100,16 @@ in {
 
     xdg.configFile = {
       "cbar/config.json" = mkIf (cfg.config != null) {
-        onChange = lib.mkIf (cfg.package != null) "${getExe cfg.package} reload";
+        onChange = ''
+          if command -v cbar > /dev/null 2>&1; then
+            cbar reload > /dev/null 2>&1 || true
+          fi
+        '';
         source = jsonFormat.generate "cbar-config" cfg.config;
+      };
+
+      "cbar/launcher.json" = mkIf (cfg.launcher != null) {
+        source = jsonFormat.generate "cbar-launcher-config" cfg.launcher;
       };
 
       "cbar/style.css" = mkIf (cfg.style != "") (
@@ -68,7 +117,9 @@ in {
         then {source = cfg.style;}
         else {text = cfg.style;}
       );
-    };
+    }
+    // scriptFiles
+    // assetFiles;
 
     systemd.user.services.cbar = mkIf cfg.systemd {
       Unit = {
