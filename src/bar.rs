@@ -36,6 +36,20 @@ fn bounds_fields(widget: &impl IsA<gtk::Widget>, target: &impl IsA<gtk::Widget>)
     )
 }
 
+fn descendant_named(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+    if widget.widget_name() == name {
+        return Some(widget.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if let Some(found) = descendant_named(&current, name) {
+            return Some(found);
+        }
+        child = current.next_sibling();
+    }
+    None
+}
+
 #[derive(Debug, Clone)]
 enum Inner {
     New {
@@ -240,11 +254,20 @@ impl Bar {
             window.add_tick_callback(move |_, _| {
                 let frame = frames.get().saturating_add(1);
                 frames.set(frame);
-                if (content.width() <= 0 || center.width() <= 0) && frame < 60 {
+                let graph = descendant_named(center.upcast_ref(), "system-graph");
+                if (content.width() <= 0
+                    || center.width() <= 0
+                    || graph.as_ref().is_none_or(|graph| graph.width() <= 0))
+                    && frame < 60
+                {
                     return glib::ControlFlow::Continue;
                 }
+                let graph = graph.as_ref().map_or_else(
+                    || "0,0,0,0".to_string(),
+                    |graph| bounds_fields(graph, &content),
+                );
                 eprintln!(
-                    "cbar-layout-trace name={name} bar={} start={} center={} end={}",
+                    "cbar-layout-trace name={name} bar={} start={} center={} end={} graph={graph}",
                     size_fields(&content),
                     bounds_fields(&start, &content),
                     bounds_fields(&center, &content),

@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   architecture, distribution, and Cargo feature scope.
 - Add a real layer-shell release gate with startup, memory, idle, sampling, and
   redraw measurements.
+- Keep the responsive graph strip physically centred and hide inactive network
+  categories without adding a hot background poller.
 
 The entries below are the inherited Ironbar changelog at the fork base.
 

@@ -160,6 +160,7 @@ struct NetworkInterface {
     name: String,
     metric: Metric,
     path: PathBuf,
+    active: bool,
 }
 
 #[derive(Debug)]
@@ -538,7 +539,7 @@ impl Sampler {
             let count = self
                 .network_interfaces
                 .iter()
-                .filter(|interface| interface.metric == metric)
+                .filter(|interface| interface.metric == metric && interface.active)
                 .count();
             self.set_capability(metric, Provider::NetworkSysfs, count);
         }
@@ -978,26 +979,54 @@ impl Sampler {
     fn sample_network(&mut self, now_ns: u64, demand: MetricSet) {
         let mut names_seen = HashSet::new();
         for metric in Metric::NETWORK {
-            let candidates: Vec<_> = self
+            let candidate_indices: Vec<_> = self
                 .network_interfaces
                 .iter()
-                .filter(|interface| interface.metric == metric)
+                .enumerate()
+                .filter(|(_, interface)| interface.metric == metric)
+                .map(|(index, _)| index)
                 .collect();
 
-            for interface in &candidates {
+            for index in &candidate_indices {
+                let interface = &self.network_interfaces[*index];
                 names_seen.insert(interface.name.clone());
             }
 
-            if candidates.is_empty() {
+            if demand.contains(metric) {
+                for index in &candidate_indices {
+                    let path = self.network_interfaces[*index].path.clone();
+                    let interface_metric = self.network_interfaces[*index].metric;
+                    let active = network_active(&path, interface_metric);
+                    self.network_interfaces[*index].active = active;
+                }
+            }
+
+            let candidates: Vec<_> = candidate_indices
+                .iter()
+                .map(|index| self.network_interfaces[*index].clone())
+                .collect();
+            let active_candidates: Vec<_> = candidates
+                .iter()
+                .filter(|interface| interface.active)
+                .cloned()
+                .collect();
+            self.set_capability(metric, Provider::NetworkSysfs, active_candidates.len());
+
+            if active_candidates.is_empty() {
                 self.frame.network.remove(&metric);
                 self.network_selected.remove(&metric);
                 self.network_previous_selected.remove(&metric);
                 self.network_fade.remove(&metric);
+                for interface in &candidates {
+                    self.network_previous_rx.remove(&interface.name);
+                    self.network_previous_tx.remove(&interface.name);
+                }
                 continue;
             }
 
-            let slot = (now_ns / 1_000_000_000 / self.rotation_seconds) as usize % candidates.len();
-            let selected = candidates[slot];
+            let slot =
+                (now_ns / 1_000_000_000 / self.rotation_seconds) as usize % active_candidates.len();
+            let selected = &active_candidates[slot];
 
             if !demand.contains(metric) {
                 for interface in &candidates {
@@ -1009,7 +1038,11 @@ impl Sampler {
                 // discovered. Hidden categories do not need link-state reads,
                 // rotation bookkeeping or cloned frame updates every 500ms;
                 // all of those refresh on the first demanded sample.
-                if self.frame.network.contains_key(&metric) {
+                if self.frame.network.get(&metric).is_some_and(|view| {
+                    active_candidates
+                        .iter()
+                        .any(|interface| interface.name == view.current.name)
+                }) {
                     continue;
                 }
 
@@ -1018,7 +1051,6 @@ impl Sampler {
                 // metadata view so that first frame paints the category label
                 // instead of reserving a blank cell. No traffic counters are
                 // read until the fitted canvas actually demands this metric.
-                let selected_active = network_active(&selected.path, selected.metric);
                 let history = self
                     .network_histories
                     .entry(selected.name.clone())
@@ -1030,8 +1062,8 @@ impl Sampler {
                         history
                     });
                 history.index = slot + 1;
-                history.total = candidates.len();
-                history.active = selected_active;
+                history.total = active_candidates.len();
+                history.active = true;
                 self.network_selected.insert(metric, selected.name.clone());
                 self.network_previous_selected.remove(&metric);
                 self.network_fade.remove(&metric);
@@ -1046,11 +1078,11 @@ impl Sampler {
                 continue;
             }
 
-            for (index, interface) in candidates.iter().enumerate() {
-                // Link state is mutable runtime data, not topology. Refresh it
-                // at the visible 500ms cadence while keeping classification,
-                // routes and interface inventory on the slow discovery path.
-                let active = network_active(&interface.path, interface.metric);
+            for interface in candidates.iter().filter(|interface| !interface.active) {
+                self.network_previous_rx.remove(&interface.name);
+                self.network_previous_tx.remove(&interface.name);
+            }
+            for (index, interface) in active_candidates.iter().enumerate() {
                 let counters = read_u64(&interface.path.join("statistics/rx_bytes"))
                     .zip(read_u64(&interface.path.join("statistics/tx_bytes")));
                 let (rx_rate, tx_rate) = if let Some((rx, tx)) = counters {
@@ -1059,9 +1091,9 @@ impl Sampler {
                         network_rate(&mut self.network_previous_tx, &interface.name, tx, now_ns),
                     )
                 } else {
-                    // A present link remains actionable even when a driver or
-                    // container omits statistics. Do not retain counters
-                    // across that gap, because a later reset is not traffic.
+                    // An active link remains actionable even when a driver or
+                    // container omits statistics. Do not retain counters across
+                    // that gap, because a later reset is not traffic.
                     self.network_previous_rx.remove(&interface.name);
                     self.network_previous_tx.remove(&interface.name);
                     (0.0, 0.0)
@@ -1073,10 +1105,10 @@ impl Sampler {
                         NetworkHistory::new(interface.name.clone(), self.history_len)
                     });
                 history.index = index + 1;
-                history.total = candidates.len();
-                history.active = active;
-                history.rx.push(if active { rx_rate } else { 0.0 });
-                history.tx.push(if active { tx_rate } else { 0.0 });
+                history.total = active_candidates.len();
+                history.active = true;
+                history.rx.push(rx_rate);
+                history.tx.push(tx_rate);
             }
 
             let selected = selected.name.clone();
@@ -1360,7 +1392,13 @@ fn classify_network(path: PathBuf, primary_routes: &HashSet<String>) -> Option<N
         _ if link_type.trim() == "65534" => Metric::Vpn,
         _ => return None,
     };
-    Some(NetworkInterface { name, metric, path })
+    let active = network_active(&path, metric);
+    Some(NetworkInterface {
+        name,
+        metric,
+        path,
+        active,
+    })
 }
 
 fn network_active(path: &Path, metric: Metric) -> bool {
@@ -2303,14 +2341,14 @@ mod tests {
     }
 
     #[test]
-    fn present_network_link_without_statistics_remains_manageable() {
+    fn active_network_link_without_statistics_remains_manageable() {
         let fixture = Fixture::new();
         basic_proc(&fixture);
         fixture.network(NetworkFixture {
             name: "radio-no-counters",
             devtype: "wlan",
-            state: "down",
-            carrier: "0",
+            state: "up",
+            carrier: "1",
             link_type: "1",
             rx: 0,
             tx: 0,
@@ -2335,7 +2373,7 @@ mod tests {
         assert!(frame.available.contains(Metric::Wlan));
         let network = &frame.network[&Metric::Wlan].current;
         assert_eq!(network.name, "radio-no-counters");
-        assert!(!network.active);
+        assert!(network.active);
         assert_eq!(network.rx.current(), Some(0.0));
         assert_eq!(network.tx.current(), Some(0.0));
     }
@@ -2347,8 +2385,8 @@ mod tests {
         fixture.network(NetworkFixture {
             name: "radio-state",
             devtype: "wlan",
-            state: "down",
-            carrier: "0",
+            state: "up",
+            carrier: "1",
             link_type: "1",
             rx: 100,
             tx: 200,
@@ -2357,27 +2395,28 @@ mod tests {
 
         let mut sampler = Sampler::new(fixture.roots.clone(), 4, 30);
         let demand: MetricSet = [Metric::Wlan].into_iter().collect();
-        let down = sampler.sample(Duration::from_secs(1), demand);
-        assert!(!down.network[&Metric::Wlan].current.active);
+        let up = sampler.sample(Duration::from_secs(1), demand);
+        assert!(up.available.contains(Metric::Wlan));
+        assert!(up.network[&Metric::Wlan].current.active);
+        assert_eq!(sampler.probe_counts().network_topology_scans, 1);
+
+        fixture.write("sys/class/net/radio-state/operstate", "down\n");
+        fixture.write("sys/class/net/radio-state/carrier", "0\n");
+        let down = sampler.sample(Duration::from_millis(1_500), demand);
+        assert!(!down.available.contains(Metric::Wlan));
+        assert!(!down.network.contains_key(&Metric::Wlan));
         assert_eq!(sampler.probe_counts().network_topology_scans, 1);
 
         fixture.write("sys/class/net/radio-state/operstate", "up\n");
         fixture.write("sys/class/net/radio-state/carrier", "1\n");
         fixture.write("sys/class/net/radio-state/statistics/rx_bytes", "600");
-        let up = sampler.sample(Duration::from_millis(1_500), demand);
-        assert!(up.network[&Metric::Wlan].current.active);
-        assert_eq!(up.network[&Metric::Wlan].current.rx.current(), Some(1000.0));
-        assert_eq!(sampler.probe_counts().network_topology_scans, 1);
-
-        fixture.write("sys/class/net/radio-state/operstate", "down\n");
-        fixture.write("sys/class/net/radio-state/carrier", "0\n");
-        let down_again = sampler.sample(Duration::from_secs(2), demand);
-        assert!(!down_again.network[&Metric::Wlan].current.active);
-        assert_eq!(
-            down_again.network[&Metric::Wlan].current.rx.current(),
-            Some(0.0)
-        );
-        assert_eq!(sampler.probe_counts().network_topology_scans, 1);
+        let core: MetricSet = [Metric::Cpu, Metric::Ram].into_iter().collect();
+        let before_probe = sampler.sample(Duration::from_secs(2), core);
+        assert!(!before_probe.available.contains(Metric::Wlan));
+        let recovered = sampler.sample_with_probe(Duration::from_secs(6), core, demand);
+        assert!(recovered.available.contains(Metric::Wlan));
+        assert!(recovered.network[&Metric::Wlan].current.active);
+        assert_eq!(sampler.probe_counts().network_topology_scans, 2);
     }
 
     #[test]
@@ -2413,15 +2452,13 @@ mod tests {
         assert_eq!(sampler.probe_counts().network_topology_scans, 1);
 
         let visible = sampler.sample(Duration::from_secs(2), lan);
-        assert!(
-            !visible.network[&Metric::Lan].current.active,
-            "the first visible sample should refresh mutable link state"
-        );
+        assert!(!visible.available.contains(Metric::Lan));
+        assert!(!visible.network.contains_key(&Metric::Lan));
         assert_eq!(sampler.probe_counts().network_topology_scans, 1);
     }
 
     #[test]
-    fn newly_present_lan_has_a_zero_view_before_counter_demand() {
+    fn inactive_lan_does_not_reserve_a_graph_cell() {
         let fixture = Fixture::new();
         basic_proc(&fixture);
         fixture.network(NetworkFixture {
@@ -2439,22 +2476,22 @@ mod tests {
         let core: MetricSet = [Metric::Cpu, Metric::Ram].into_iter().collect();
         let lan_probe: MetricSet = [Metric::Lan].into_iter().collect();
         let frame = sampler.sample_with_probe(Duration::from_secs(1), core, lan_probe);
-        assert!(frame.available.contains(Metric::Lan));
-        let lan = &frame.network[&Metric::Lan].current;
-        assert_eq!(lan.name, "arbitrary-wired");
-        assert!(!lan.active);
-        assert_eq!(lan.rx.current(), Some(0.0));
-        assert_eq!(lan.tx.current(), Some(0.0));
+        assert!(!frame.available.contains(Metric::Lan));
+        assert!(!frame.network.contains_key(&Metric::Lan));
         assert!(sampler.network_previous_rx.is_empty());
         assert!(sampler.network_previous_tx.is_empty());
 
-        fs::remove_dir_all(fixture.root.join("sys/class/net/arbitrary-wired"))
-            .expect("LAN fixture should be removable");
+        fixture.write("sys/class/net/arbitrary-wired/operstate", "up\n");
+        fixture.write("sys/class/net/arbitrary-wired/carrier", "1\n");
         let cached = sampler.sample_with_probe(Duration::from_secs(2), core, lan_probe);
-        assert!(cached.available.contains(Metric::Lan));
-        let absent = sampler.sample_with_probe(Duration::from_secs(6), core, lan_probe);
-        assert!(!absent.available.contains(Metric::Lan));
-        assert!(!absent.network.contains_key(&Metric::Lan));
+        assert!(!cached.available.contains(Metric::Lan));
+        let active = sampler.sample_with_probe(Duration::from_secs(6), core, lan_probe);
+        assert!(active.available.contains(Metric::Lan));
+        let lan = &active.network[&Metric::Lan].current;
+        assert_eq!(lan.name, "arbitrary-wired");
+        assert!(lan.active);
+        assert_eq!(lan.rx.current(), Some(0.0));
+        assert_eq!(lan.tx.current(), Some(0.0));
     }
 
     #[test]
@@ -2619,9 +2656,8 @@ mod tests {
         let demand: MetricSet = Metric::NETWORK.into_iter().collect();
         let first = sampler.sample(Duration::from_secs(2), demand);
         assert_eq!(first.network[&Metric::Lan].current.name, "br0");
-        assert_eq!(first.network[&Metric::Wlan].current.name, "wlan-é");
-        assert!(!first.network[&Metric::Wlan].current.active);
-        assert_eq!(first.network[&Metric::Wlan].current.rx.current(), Some(0.0));
+        assert!(!first.available.contains(Metric::Wlan));
+        assert!(!first.network.contains_key(&Metric::Wlan));
         assert_eq!(first.network[&Metric::Wwan].current.name, "wwan0");
         assert_eq!(first.network[&Metric::Vpn].current.name, "private-mesh");
 

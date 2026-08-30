@@ -11,7 +11,7 @@ mod renderer;
 mod sampler;
 
 use crate::config::CommonConfig;
-use crate::modules::{Module, ModuleInfo, ModuleParts, WidgetContext};
+use crate::modules::{Module, ModuleInfo, ModuleLocation, ModuleParts, WidgetContext};
 use crate::{module_impl, spawn};
 use area::ResponsiveGraphArea;
 use cbar_launch_service::{submit_detached_argv, warm_launch_service};
@@ -166,6 +166,15 @@ impl Module<gtk::Box> for SystemGraphModule {
             Layout::preferred_width(minimum),
             GRAPH_HEIGHT,
         );
+        area.set_widget_name("system-graph");
+        if matches!(&info.location, ModuleLocation::Center) {
+            // GtkCenterBox centres its centre child, but a GtkBox inside that
+            // child still packs non-expanding descendants at the leading edge.
+            // Fill the centre allocation so Layout::fit can centre the graph
+            // strip inside the real available width.
+            container.set_hexpand(true);
+            area.set_hexpand(true);
+        }
 
         let frame = Rc::new(RefCell::new(Arc::new(GraphFrame::default())));
         let (cancel_tx, cancel_rx) = oneshot::channel();

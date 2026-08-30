@@ -712,14 +712,16 @@ bar = allocation("bar")
 start = allocation("start")
 center = allocation("center")
 end = allocation("end")
+graph = allocation("graph")
 bx, _, bw, bh = bar
 sx, _, sw, _ = start
 cx, _, cw, _ = center
 ex, _, ew, _ = end
+gx, _, gw, _ = graph
 
 failures = []
-if bw <= 0 or bh <= 0 or cw <= 0:
-    failures.append(f"non-positive allocation: bar={bar} center={center}")
+if bw <= 0 or bh <= 0 or cw <= 0 or gw <= 0:
+    failures.append(f"non-positive allocation: bar={bar} center={center} graph={graph}")
 if bx != 0 or bw != 1920:
     failures.append(f"bar did not span the deterministic 1920px output: bar={bar}")
 if sw - ew < 250:
@@ -737,14 +739,23 @@ if midpoint_delta_2 > 2:
     )
 if cx < bx or cx + cw > bx + bw:
     failures.append(f"center escaped the bar allocation: bar={bar} center={center}")
+graph_midpoint_delta_2 = abs(bar_midpoint_2 - (2 * gx + gw))
+if graph_midpoint_delta_2 > 2:
+    failures.append(
+        f"graph midpoint drifted by {graph_midpoint_delta_2 / 2:.1f}px: "
+        f"bar={bar} graph={graph} center={center}"
+    )
+if gx < cx or gx + gw > cx + cw:
+    failures.append(f"graph escaped the center allocation: graph={graph} center={center}")
 if sx + sw > cx or cx + cw > ex:
     failures.append(
         f"start/center/end allocations overlap: start={start} center={center} end={end}"
     )
 
 print(
-    f"layout bar={bw}x{bh} start={sw}px center={cw}px end={ew}px "
-    f"midpoint_delta={midpoint_delta_2 / 2:.1f}px"
+    f"layout bar={bw}x{bh} start={sw}px center={cw}px graph={gw}px end={ew}px "
+    f"midpoint_delta={midpoint_delta_2 / 2:.1f}px "
+    f"graph_midpoint_delta={graph_midpoint_delta_2 / 2:.1f}px"
 )
 if failures:
     for failure in failures:
