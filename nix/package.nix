@@ -58,8 +58,8 @@
       --prefix LUA_PATH : "./?.lua;${lgi}/share/lua/5.1/?.lua;${lgi}/share/lua/5.1/?/init.lua;${luajit}/share/lua/5.1/\?.lua;${luajit}/share/lua/5.1/?/init.lua"
       --prefix LUA_CPATH : "./?.so;${lgi}/lib/lua/5.1/?.so;${luajit}/lib/lua/5.1/?.so;${luajit}/lib/lua/5.1/loadall.so"
     '';
-in
-  craneLib.buildPackage {
+in let
+  commonArgs = {
     inherit version;
 
     pname = "cbar";
@@ -152,9 +152,21 @@ in
         libevdev
       ];
 
+    cargoExtraArgs = builtins.concatStringsSep " " (builtins.filter (s: s != "") flags);
+  };
+
+  # Keep third-party compilation in a derivation keyed by Cargo's dependency inputs. Application
+  # source edits then rebuild cbar itself without rebuilding its complete Rust dependency graph.
+  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+in
+  craneLib.buildPackage (commonArgs // {
+    inherit cargoArtifacts;
+
     propagatedBuildInputs = [gtk4];
 
-    cargoExtraArgs = builtins.concatStringsSep " " (builtins.filter (s: s != "") flags);
+    # Expose the exact dependency artifact so the fleet builder can retain one bounded current
+    # generation across local Nix store garbage collections.
+    passthru = { inherit cargoArtifacts; };
 
     preFixup = ''
       gappsWrapperArgs+=(
@@ -195,4 +207,4 @@ in
       platforms = lib.platforms.linux;
       mainProgram = "cbar";
     };
-  }
+  })
