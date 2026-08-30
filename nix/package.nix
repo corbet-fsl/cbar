@@ -70,25 +70,58 @@ in
     src = let
       fs = lib.fileset;
       root = ../.;
-      nixRelated = fs.fileFilter (file: file.hasExt "nix" || file.name == "flake.lock") root;
-      cicdRelated = fs.unions [
-        (lib.path.append root "Dockerfile")
-        (lib.path.append root ".github")
+
+      # Keep this list explicit: the package source is a cache boundary, not a
+      # repository archive. Crane keeps every workspace manifest and the lock
+      # file, while the remaining entries are exactly the Rust sources and
+      # non-Rust inputs consumed by cargo, rustc, or postInstall.
+      cargoSources = fs.unions [
+        (craneLib.fileset.cargoTomlAndLock root)
+        (lib.path.append root ".cargo/config.toml")
+        (lib.path.append root "build.rs")
+        (lib.path.append root "src")
+        (lib.path.append root "launch-service/src")
+        (lib.path.append root "launcher-core/src")
+        (lib.path.append root "launcher-gtk/src")
       ];
-      ideRelated = fs.unions [
-        (lib.path.append root ".idea")
+
+      # These files are embedded with include_str!. Changes to them therefore
+      # change the application and must invalidate the final package.
+      embeddedInputs = fs.unions [
+        (lib.path.append root "README.md")
+        (lib.path.append root "docs/Dynamic values.md")
+        (lib.path.append root "docs/Ironvars.md")
+        (lib.path.append root "lua/init.lua")
+        (lib.path.append root "lua/draw.lua")
+        (lib.path.append root "examples/minimal/config.corn")
+        (lib.path.append root "examples/minimal/config.json")
+        (lib.path.append root "examples/minimal/config.toml")
+        (lib.path.append root "examples/minimal/config.yaml")
+        (lib.path.append root "examples/minimal/style.css")
+        (lib.path.append root "examples/desktop/config.corn")
+        (lib.path.append root "examples/desktop/config.json")
+        (lib.path.append root "examples/desktop/config.toml")
+        (lib.path.append root "examples/desktop/config.yaml")
+        (lib.path.append root "examples/desktop/style.css")
+      ];
+
+      # These are copied verbatim into the package output below. Test fixtures
+      # are deliberately absent: their include_str! calls are cfg(test), and
+      # this package derivation intentionally has doCheck = false.
+      installedLegalInputs = fs.unions [
+        (lib.path.append root "LICENSE")
+        (lib.path.append root "LICENSES/IRONBAR-MIT.txt")
+        (lib.path.append root "launcher-core/LICENSE")
+        (lib.path.append root "NOTICE")
       ];
     in
       fs.toSource {
         inherit root;
-        # NOTE: can possibly filter out more
-        fileset = fs.difference root (
-          fs.unions [
-            nixRelated
-            cicdRelated
-            ideRelated
-          ]
-        );
+        fileset = fs.unions [
+          cargoSources
+          embeddedInputs
+          installedLegalInputs
+        ];
       };
 
     nativeBuildInputs = [
