@@ -1,0 +1,12 @@
+schema = 1
+project = "cbar"
+
+# Real Scroll/Wayland release-matrix and headless-session scripts remain explicit gates; unit tests alone are not their evidence.
+
+[checks.rust]
+kind = "commands"
+commands = [["nix", "develop", "--no-update-lock-file", "--command", "cargo", "test", "--locked"]]
+
+[checks.fmt]
+kind = "cargo"
+actions = ["fmt"]
