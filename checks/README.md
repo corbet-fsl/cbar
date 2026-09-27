@@ -55,3 +55,8 @@ under one private temporary directory. `HOME` and inherited compositor socket va
 before startup, so the check cannot read personal configuration or target the caller's graphical
 session. The compositor, cbar, and virtual-keyboard drivers each run in an owned session group;
 cleanup sends the whole group bounded `TERM` then `KILL`, including in-group wrapper descendants.
+
+The `mpris` CI selector runs the actual music polling workers on an isolated
+D-Bus session with no player. It verifies that repeated bus-name churn leaves no
+idle subscriber behind. The test is ignored by ordinary `cargo test` so it never
+connects to a developer's desktop bus; run it through the declared selector.

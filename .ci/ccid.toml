@@ -10,3 +10,7 @@ commands = [["nix", "develop", "--no-update-lock-file", "--command", "cargo", "t
 [checks.fmt]
 kind = "cargo"
 actions = ["fmt"]
+
+[checks.mpris]
+kind = "commands"
+commands = [["nix", "develop", "--no-update-lock-file", "--command", "bash", "checks/mpris-session.sh"]]

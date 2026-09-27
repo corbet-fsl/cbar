@@ -36,25 +36,29 @@ impl Client {
             let tx = tx.clone();
 
             spawn_blocking(move || {
-                let player_finder = PlayerFinder::new().expect("Failed to connect to D-Bus");
-
                 // D-Bus gives no event for new players,
                 // so we have to keep polling the player list
                 loop {
                     // mpris-rs does not filter NoActivePlayer errors, so we have to do it ourselves
-                    let players = player_finder.find_all().unwrap_or_else(|e| match e {
-                        mpris::FindingError::DBusError(DBusError::TransportError(
-                            transport_error,
-                        )) if transport_error.name() == Some(NO_ACTIVE_PLAYER)
-                            || transport_error.name() == Some(NO_REPLY) =>
-                        {
-                            vec![]
-                        }
-                        _ => {
-                            error!("D-Bus error getting MPRIS players: {e:?}");
-                            vec![]
-                        }
-                    });
+                    // A finder subscribes to signals, including every NameOwnerChanged.
+                    // Bound polling connections to one iteration so signals cannot collect
+                    // while the worker sleeps, and a disconnected bus can recover.
+                    let players = PlayerFinder::new()
+                        .map_err(mpris::FindingError::from)
+                        .and_then(|finder| finder.find_all())
+                        .unwrap_or_else(|e| match e {
+                            mpris::FindingError::DBusError(DBusError::TransportError(
+                                transport_error,
+                            )) if transport_error.name() == Some(NO_ACTIVE_PLAYER)
+                                || transport_error.name() == Some(NO_REPLY) =>
+                            {
+                                vec![]
+                            }
+                            _ => {
+                                error!("D-Bus error getting MPRIS players: {e:?}");
+                                vec![]
+                            }
+                        });
 
                     // Acquire the lock of current_player before players to avoid deadlock.
                     // There are places where we lock on current_player and players, but we always lock on current_player first.
@@ -98,10 +102,8 @@ impl Client {
             let tx = tx.clone();
 
             spawn_blocking(move || {
-                let player_finder = PlayerFinder::new().expect("to get new player finder");
-
                 loop {
-                    Self::send_tick_update(&player_finder, &current_player, &tx);
+                    Self::send_tick_update(&current_player, &tx);
                     sleep(Duration::from_millis(TICK_INTERVAL_MS));
                 }
             });
@@ -227,13 +229,16 @@ impl Client {
     }
 
     fn send_tick_update(
-        player_finder: &PlayerFinder,
         current_player: &Mutex<Option<String>>,
         tx: &broadcast::Sender<PlayerUpdate>,
     ) {
-        if let Some(player) = lock!(current_player)
-            .as_ref()
-            .and_then(|name| player_finder.find_by_name(name).ok())
+        // Do not keep a subscribed connection alive when there is no player:
+        // nothing would read its signals, eventually exhausting the bus quota.
+        let Some(name) = lock!(current_player).clone() else {
+            return;
+        };
+        if let Ok(finder) = PlayerFinder::new()
+            && let Ok(player) = finder.find_by_name(&name)
             && let Ok(metadata) = player.get_metadata()
         {
             let update = PlayerUpdate::ProgressTick(ProgressTick {
@@ -382,5 +387,57 @@ fn replace_empty_none(string: String) -> Option<String> {
         None
     } else {
         Some(string)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Client;
+    use std::process::Command;
+    use std::thread::sleep;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore = "requires an isolated dbus-run-session; run the mpris CI check"]
+    fn idle_polling_releases_bus_subscriptions() {
+        // Run the actual workers with no player. A persistent idle finder used to
+        // retain four match rules and collect every bus name change indefinitely.
+        // dbus-send creates and releases a fresh connection for each observation,
+        // also exercising that NameOwnerChanged traffic on the isolated bus.
+        let _client = Client::new();
+        sleep(Duration::from_millis(1100));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut consecutive_idle = 0;
+        while Instant::now() < deadline {
+            let output = Command::new("dbus-send")
+                .args([
+                    "--session",
+                    "--print-reply",
+                    "--reply-timeout=1000",
+                    "--dest=org.freedesktop.DBus",
+                    "/org/freedesktop/DBus",
+                    "org.freedesktop.DBus.ListNames",
+                ])
+                .output()
+                .expect("dbus-send must be available in the development shell");
+            assert!(output.status.success());
+            let reply = String::from_utf8(output.stdout).unwrap();
+            let unique_names = reply
+                .lines()
+                .filter(|line| line.contains("string \":"))
+                .count();
+            // The observing dbus-send is the only persistent peer. Discovery can
+            // overlap an observation briefly, so require consecutive quiet probes.
+            if unique_names == 1 {
+                consecutive_idle += 1;
+                if consecutive_idle == 20 {
+                    return;
+                }
+            } else {
+                consecutive_idle = 0;
+            }
+            sleep(Duration::from_millis(10));
+        }
+        panic!("idle MPRIS polling retained a subscribed D-Bus connection");
     }
 }
