@@ -6,6 +6,7 @@ project = "cbar"
 [checks.rust]
 kind = "commands"
 commands = [["nix", "develop", "--no-update-lock-file", "--command", "cargo", "test", "--locked"]]
+cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["python3", "--version"], ["nix", "--version"]]
 
 [checks.fmt]
 kind = "cargo"
@@ -14,3 +15,18 @@ actions = ["fmt"]
 [checks.mpris]
 kind = "commands"
 commands = [["nix", "develop", "--no-update-lock-file", "--command", "bash", "checks/mpris-session.sh"]]
+cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["python3", "--version"], ["nix", "--version"]]
+
+[checks.verify]
+kind = "commands"
+commands = [["bash", ".ci/verify.sh"]]
+cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["python3", "--version"], ["nix", "--version"]]
+
+[render]
+tool_revision = "81ebac8e86e20bc93b69d5e912bbcb0c0d036d58"
+
+[jobs.verify]
+scheduler = "crow"
+checks = ["rust", "fmt", "mpris", "verify"]
+workflow = "repository-jobs"
+command = ["bash", ".ci/run-cached.sh"]

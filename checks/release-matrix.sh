@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Run the complete source release matrix, optionally followed by the real compositor check.
 set -euo pipefail
+# Merge stderr into stdout so the captured Crow log shows compiler diagnostics.
+exec 2>&1
 
 usage() {
     printf '%s\n' \
@@ -46,7 +48,16 @@ step check-all-targets-features
 cargo check --workspace --all-targets --all-features --locked
 
 step clippy-all-targets-features
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+clippy_log="$repo/.ci/clippy-all-targets-features.log"
+rm -f -- "$clippy_log"
+set +e
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings >"$clippy_log" 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+  tail -n 200 -- "$clippy_log"
+  exit "$rc"
+fi
 
 step check-no-default-features
 RUSTFLAGS="$sparse_rustflags" cargo check --no-default-features --locked

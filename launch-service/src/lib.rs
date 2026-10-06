@@ -851,7 +851,7 @@ impl Drop for DirectSlot {
 
 fn reserve_counter(counter: &AtomicUsize, limit: usize) -> Result<(), LaunchError> {
     counter
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             (current < limit).then_some(current + 1)
         })
         .map(|_| ())
