@@ -23,7 +23,7 @@ commands = [["bash", ".ci/verify.sh"]]
 cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["python3", "--version"], ["nix", "--version"]]
 
 [render]
-tool_revision = "81ebac8e86e20bc93b69d5e912bbcb0c0d036d58"
+tool_revision = "77a5ac18542750de020ebf753d22c3200530282b"
 
 [jobs.verify]
 scheduler = "crow"

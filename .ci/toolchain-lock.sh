@@ -47,6 +47,30 @@ TOOLCHAIN_WASM_TARGETS="${TOOLCHAIN_WASM_TARGETS:-}"
 
 _tc_rustup() { "$CARGO_HOME/bin/rustup" "$@"; }
 
+# rustup refuses installs/updates when $HOME differs from the euid home.
+# Run each install/update with HOME set to the euid home for that command
+# only; both roots stay explicit and absolute, parent env is unchanged, and
+# a failed lookup fails closed instead of using the mismatched HOME.
+_tc_euid_home() {
+  local h
+  h=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6) || { echo 'toolchain-lock: cannot resolve euid home (getent failed)' >&2; return 1; }
+  [[ -n $h ]] || { echo 'toolchain-lock: cannot resolve euid home (empty entry)' >&2; return 1; }
+  printf '%s' "$h"
+}
+
+_tc_run_install() { # <cmd...>: run one mutating install/update with euid HOME
+  [[ ${CARGO_HOME:-} = /* ]] || { echo 'toolchain-lock: CARGO_HOME must be absolute' >&2; return 1; }
+  [[ ${RUSTUP_HOME:-} = /* ]] || { echo 'toolchain-lock: RUSTUP_HOME must be absolute' >&2; return 1; }
+  local eh
+  eh=$(_tc_euid_home) || return 1
+  if [[ $eh != "${HOME:-}" ]]; then
+    HOME="$eh" "$@" || return 1
+  else
+    "$@" || return 1
+  fi
+  return 0
+}
+
 # --- readiness probes (read-only; safe under shared) ---
 tc_stable_ready() {
   _tc_rustup run stable rustc --version >/dev/null 2>&1 || return 1
@@ -125,25 +149,25 @@ toolchain_install() {
   # install may provide a bare compiler without rustfmt/clippy, and
   # tc_stable_ready demands both. Never a reinstall — adds only.
   if ! _tc_rustup run stable rustc --version >/dev/null 2>&1; then
-    proto install rust stable || return 1
+    _tc_run_install proto install rust stable || return 1
   fi
   stable_comps=$(_tc_rustup component list --toolchain stable --installed 2>/dev/null) || return 1
   if ! grep -q '^rustfmt' <<<"$stable_comps"; then
-    _tc_rustup component add rustfmt --toolchain stable || return 1
+    _tc_run_install "$CARGO_HOME/bin/rustup" component add rustfmt --toolchain stable || return 1
   fi
   if ! grep -q '^clippy' <<<"$stable_comps"; then
-    _tc_rustup component add clippy --toolchain stable || return 1
+    _tc_run_install "$CARGO_HOME/bin/rustup" component add clippy --toolchain stable || return 1
   fi
   if [[ $TOOLCHAIN_WANT_NIGHTLY == 1 ]]; then
     if ! _tc_rustup run nightly rustc --version >/dev/null 2>&1; then
-      _tc_rustup toolchain install nightly --component llvm-tools-preview || return 1
+      _tc_run_install "$CARGO_HOME/bin/rustup" toolchain install nightly --component llvm-tools-preview || return 1
     else
       local comps
       comps=$(_tc_rustup component list --toolchain nightly --installed 2>/dev/null) || return 1
       if ! _tc_has_llvm_tools "$comps"; then
         # Alias accepted by rustup; installs the component list reports as
         # llvm-tools-<target> on current toolchains.
-        _tc_rustup component add llvm-tools-preview --toolchain nightly || return 1
+        _tc_run_install "$CARGO_HOME/bin/rustup" component add llvm-tools-preview --toolchain nightly || return 1
       fi
     fi
   fi
@@ -153,7 +177,7 @@ toolchain_install() {
     tgt=${pair#*:}
     tgts=$(_tc_rustup target list --toolchain "$tc" --installed 2>/dev/null) || return 1
     if ! grep -q "^$tgt" <<<"$tgts"; then
-      _tc_rustup target add "$tgt" --toolchain "$tc" || return 1
+      _tc_run_install "$CARGO_HOME/bin/rustup" target add "$tgt" --toolchain "$tc" || return 1
     fi
   done
   return 0
