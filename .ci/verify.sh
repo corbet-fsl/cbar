@@ -17,5 +17,5 @@ exec nix develop --no-update-lock-file --command bash -euo pipefail -c '
   export PATH="$CBAR_CI_WORKER_PATH:$PATH"
   bash checks/release-matrix.sh --source-only
   sccache --show-stats || true
-  nix shell --no-update-lock-file --inputs-from . nixpkgs#bash nixpkgs#coreutils nixpkgs#dbus nixpkgs#gnugrep nixpkgs#procps nixpkgs#python3 nixpkgs#util-linux nixpkgs#wtype github:julian-corbet/nixscroll-corbet-ch/d875e6544b93fcea9f03d59cba4afbfebf11fde4#scroll --command checks/release-matrix.sh wtype -- scroll -c '\''{config}'\''
+  nix shell --no-update-lock-file --inputs-from . nixpkgs#bash nixpkgs#coreutils nixpkgs#dbus nixpkgs#gnugrep nixpkgs#procps nixpkgs#python3 nixpkgs#util-linux nixpkgs#wtype github:julian-corbet/nixscroll-corbet-ch/546e867dc28ac485f0fed1fbe8f364b99bc41108#scroll --command checks/release-matrix.sh wtype -- scroll -c '\''{config}'\''
 '

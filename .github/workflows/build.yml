@@ -52,7 +52,7 @@ jobs:
           nix shell --inputs-from .
           nixpkgs#bash nixpkgs#coreutils nixpkgs#dbus nixpkgs#gnugrep
           nixpkgs#procps nixpkgs#python3 nixpkgs#util-linux nixpkgs#wtype
-          github:julian-corbet/nixscroll-corbet-ch/d875e6544b93fcea9f03d59cba4afbfebf11fde4#scroll
+          github:julian-corbet/nixscroll-corbet-ch/546e867dc28ac485f0fed1fbe8f364b99bc41108#scroll
           --command checks/release-matrix.sh
           wtype -- scroll -c '{config}'
         env:
