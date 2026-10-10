@@ -20,17 +20,21 @@ variables:
 steps:
   - name: native-status-pending
     image: bash
+    environment:
+      CCID_VERDICT_JOBS: 'verify'
     commands:
       - |
         set -eu
         if [ -n "${CCID_STATUS_CONFIG:-}" ]; then
-          printf '%s  %s\n' "$CCID_STATUS_BINARY_SHA256" "$CCID_STATUS_BINARY" | sha256sum --check --strict
-          "$CCID_STATUS_BINARY" --commit "$CI_COMMIT_SHA" --name "ccid/$(printf '%s' "$CCID_JOB_REQUEST" | jq -er .job)" --url "$CI_PIPELINE_URL" --started "$CI_PIPELINE_CREATED" --state pending
+          printf '%s  %s\n' "$CI_TOOL_BINARY_SHA256" "$CI_TOOL_BINARY" | sha256sum --check --strict
+          "$CI_TOOL_BINARY" verdict --commit "$CI_COMMIT_SHA" --job "$(printf '%s' "$CCID_JOB_REQUEST" | jq -er .job)" --gating "$CCID_VERDICT_JOBS" --url "$CI_PIPELINE_URL" --started "$CI_PIPELINE_CREATED" --state pending
         fi
   - name: repository-job
     image: bash
     environment:
-      CCID_REVISION: '223adb5a008f4ed1ba36d1f52796ccd29077db6e'
+      CCID_VERDICT_JOBS: 'verify'
+      CCID_STATUS_CONFIG: '${CCID_STATUS_CONFIG:-}'
+      CCID_REVISION: '78a4e05b4e1cb25aaeba3966951564d74277bcbd'
     commands:
       - |
         set -eu
@@ -40,16 +44,16 @@ steps:
         trap 'rm -f -- "$request_file"' EXIT
         printf '%s\n' "$CCID_JOB_REQUEST" > "$request_file"
         "$CI_TOOL_BINARY" execute-job --request "$request_file" --expect-commit "$CI_COMMIT_SHA"
-  - name: native-status-complete
+  - name: native-status-failure
     image: bash
     when:
-      - status: [success, failure]
+      - status: [failure]
+    environment:
+      CCID_VERDICT_JOBS: 'verify'
     commands:
       - |
         set -eu
         if [ -n "${CCID_STATUS_CONFIG:-}" ]; then
-          printf '%s  %s\n' "$CCID_STATUS_BINARY_SHA256" "$CCID_STATUS_BINARY" | sha256sum --check --strict
-          state=failure
-          if [ "$CI_PIPELINE_STATUS" = success ]; then state=success; fi
-          "$CCID_STATUS_BINARY" --commit "$CI_COMMIT_SHA" --name "ccid/$(printf '%s' "$CCID_JOB_REQUEST" | jq -er .job)" --url "$CI_PIPELINE_URL" --started "$CI_PIPELINE_CREATED" --state "$state"
+          printf '%s  %s\n' "$CI_TOOL_BINARY_SHA256" "$CI_TOOL_BINARY" | sha256sum --check --strict
+          "$CI_TOOL_BINARY" verdict --commit "$CI_COMMIT_SHA" --job "$(printf '%s' "$CCID_JOB_REQUEST" | jq -er .job)" --gating "$CCID_VERDICT_JOBS" --url "$CI_PIPELINE_URL" --started "$CI_PIPELINE_CREATED" --state failure
         fi
