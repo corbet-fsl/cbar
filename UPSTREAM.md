@@ -2,7 +2,7 @@
 
 This repository is derived from [Ironbar](https://github.com/JakeStanger/ironbar).
 The fork began from Ironbar commit
-`5b96bcffac54dd82347badcc07f79d58efa715c7`. Ironbar-derived source preserves
+`810e4add1f081b303c07f4ec14df2af7087cbdbb`. Ironbar-derived source preserves
 Ironbar's MIT grant and copyright notice in `LICENSES/IRONBAR-MIT.txt` and
 `NOTICE`; cbar contributions are provided under FSL-1.1-ALv2 and convert to
 Apache-2.0 two years after each version is made available.

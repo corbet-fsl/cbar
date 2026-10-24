@@ -3,7 +3,7 @@
 This fixture records the deployed Lua/Cairo renderer inspected for the native
 port. It is provenance, not a second runtime implementation.
 
-- source revision: `d435d14b14f28a397a4bb52929096447ee793c02`
+- source revision: `9d83dc60d2be49baa5ecbc0ebdc3b1a1623d43a8`
 - `sys_graph.lua` SHA-256: `4910626be2eb4d27f13450c6bcba860da8f6d6a3c766d3ffe520ba22cd58f715`
 - history: 40 samples
 - cadence: 500 ms
