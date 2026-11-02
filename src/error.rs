@@ -5,6 +5,8 @@ pub enum ExitCode {
     IpcResponseError = 3,
     WaylandDispatchError = 4,
     CliError = 5,
+    /// The session bus is unusable for this process (src/bus_guard.rs); the service manager restarts the bar.
+    BusLost = 6,
 }
 
 pub const ERR_MUTEX_LOCK: &str = "Failed to get lock on Mutex";

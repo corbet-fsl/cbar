@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   redraw measurements.
 - Keep the responsive graph strip physically centred and hide inactive network
   categories without adding a hot background poller.
+- Exit with code 6 when the session bus is unusable for the bar (three failed
+  probes in a row, or a connection of the bar with more than 16 MiB queued at
+  dbus-broker because it stopped reading), so that `Restart=on-failure` starts a
+  fresh bar. A stalled connection used to fill the user's bus quota silently, and
+  the full quota then broke every `systemctl --user daemon-reload`.
 
 The entries below are the inherited Ironbar changelog at the fork base.
 

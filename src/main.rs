@@ -37,6 +37,8 @@ use crate::ironvar::VariableManager;
 use crate::style::{CssSource, load_css};
 
 mod bar;
+#[cfg(feature = "zbus")]
+mod bus_guard;
 mod channels;
 #[cfg(feature = "cli")]
 mod cli;
@@ -256,6 +258,9 @@ impl Ironbar {
             };
 
             load_css(&css_source);
+
+            #[cfg(feature = "zbus")]
+            bus_guard::spawn();
 
             spawn(async move {
                 tokio::signal::ctrl_c()
