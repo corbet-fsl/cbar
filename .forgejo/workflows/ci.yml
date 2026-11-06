@@ -9,7 +9,6 @@ concurrency:
   cancel-in-progress: true
 # The speed profile every CI compile shares: no incremental state, no debug information.
 env:
-  CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
   CARGO_PROFILE_RELEASE_DEBUG: "0"
@@ -18,93 +17,49 @@ jobs:
   verify:
     runs-on: heavy
     steps:
-      - name: Fetch the exact commit and run the declared checks
+      - name: Run verify
         env:
           CCID_FORGE_TOKEN: ${{ github.token }}
-          CCID_REVISION: 2db9dddd5e43d48b6cdbb2728818957db65acf5e
-          CCID_TOOL_SHA256: f5a672c714ca91a87e230713086379f06ad6df6d0ccd9112ee5fbf0cd44f95e7
         run: |
           set -eu
-          # A runner may name CCID_SOURCE_ROOT: the source then lives in a stable directory per repository, job and slot instead of the per-task directory, so absolute source
-          # paths (cargo's CARGO_MANIFEST_DIR, which sccache puts into every key) repeat from run to run and the compile caches hit. A slot is claimed by a lock directory that
-          # holds the pid and start time of this shell (the shell becomes the check by exec, so the pid lives as long as the job; no file descriptor is inherited by daemons).
-          if [ -n "${CCID_SOURCE_ROOT:-}" ]; then
-            slots="${CCID_SOURCE_SLOTS:-2}"
-            base="$CCID_SOURCE_ROOT/${{ github.repository }}/${{ github.job }}"
-            mkdir -p "$base"
-            me="$$ $(cut -d' ' -f22 /proc/$$/stat)"
-            deadline=$(( $(date +%s) + ${CI_TIMEOUT:-2700} ))
-            slot=
-            while [ -z "$slot" ]; do
-              n=1
-              while [ "$n" -le "$slots" ]; do
-                if mkdir "$base/slot-$n.lock" 2>/dev/null; then slot=$n; break; fi
-                held=$(cat "$base/slot-$n.lock/owner" 2>/dev/null || true)
-                pid=${held%% *}; start=${held#* }
-                if [ -n "$pid" ] && [ "$(cut -d' ' -f22 "/proc/$pid/stat" 2>/dev/null || true)" != "$start" ]; then
-                  # The owner is gone (crashed or killed): one job wins the rename and reclaims the slot, the others retry.
-                  if mv "$base/slot-$n.lock" "$base/slot-$n.dead.$$" 2>/dev/null; then rm -r "$base/slot-$n.dead.$$"; fi
-                  continue
-                fi
-                n=$((n + 1))
-              done
-              if [ -z "$slot" ]; then
-                [ "$(date +%s)" -lt "$deadline" ] || { echo "no free source slot under $base" >&2; exit 2; }
-                sleep 5
-              fi
-            done
-            echo "$me" > "$base/slot-$slot.lock/owner"
-            mkdir -p "$base/slot-$slot"
-            cd "$base/slot-$slot"
-            echo "CCID_SOURCE_DIR=$PWD" >> "${GITHUB_ENV:-/dev/null}"
-          fi
-          git init --quiet .
-          git remote remove origin 2>/dev/null || true
-          git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
-          fetch() { git -c "http.extraHeader=Authorization: token $CCID_FORGE_TOKEN" fetch --quiet --depth 1 origin "${{ github.sha }}"; }
-          # A runner may route the fetch to a local copy of the repository (its own git configuration); that copy can lag the push by seconds. Then ask the forge itself.
-          # Seconds after a push the copy may not have the commit yet ("not our ref"): ask it again a few times, then the forge itself (same commit id, so the same verification).
-          fetched=
-          for attempt in 1 2 3; do
-            if fetch; then fetched=1; break; fi
-            [ "$attempt" -lt 3 ] && sleep 5
-          done
-          if [ -z "$fetched" ]; then
-            echo "local copy lacks ${{ github.sha }}, fetching from the forge" >&2
-            for attempt in 1 2 3; do
-              if GIT_CONFIG_COUNT=0 fetch; then fetched=1; break; fi
-              [ "$attempt" -lt 3 ] && sleep 5
-            done
-          fi
-          [ -n "$fetched" ] || { echo "cannot fetch ${{ github.sha }}" >&2; exit 2; }
-          # Git LFS: a repository that tracks files with LFS gets the real content, not the pointer files (the LFS transfer authenticates with Basic).
-          GIT_LFS_SKIP_SMUDGE=1 git checkout --quiet --force --detach FETCH_HEAD
-          if git show FETCH_HEAD:.gitattributes 2>/dev/null | grep -q 'filter=lfs'; then
-            # The LFS endpoint wants HTTP Basic (the "token" scheme git itself accepts is refused with 401), and its batch answer carries a credential for the object downloads: a
-            # credential helper supplies Basic exactly once (a fixed extra header would be sent twice and the forge answers 400). `lfs install --local` makes `lfs pull` check the files out.
-            git lfs install --local --skip-smudge
-            git -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$CCID_FORGE_TOKEN"; }; f' lfs pull origin
-          fi
-          git clean --quiet -ffdx
-          : "${CCID_TOOL_ROOT:?the runner must provide CCID_TOOL_ROOT}"
+          # The ccid release this job runs is chosen centrally: the runner names a channel file (CCID_CHANNEL_URL: {"default": {"revision", "sha256"}, "classes": {"<runs-on>": {...}}})
+          # and a tool root (CCID_TOOL_ROOT). This step only finds that release and hands over to `ccid job-run`, which holds the actual job logic. It never needs a change.
           triple="${CCID_TOOL_TRIPLE:-$(uname -m)-unknown-linux-gnu}"
-          tool="$CCID_TOOL_ROOT/ccid/$CCID_REVISION/$triple/ccid"
-          # A runner without the declared tool fetches the pinned release by hash: CCID_TOOL_URL (runner environment) is the package base, the digest comes from the manifest.
-          if [ ! -x "$tool" ] && [ -n "${CCID_TOOL_URL:-}" ] && [ -n "${CCID_TOOL_SHA256:-}" ]; then
-            mkdir -p "$(dirname "$tool")"
-            # Concurrent jobs fetch the same release: each into a temp file of its own, the rename is atomic and the content is the pinned digest either way.
-            part=$(mktemp "$tool.XXXXXX")
-            curl --fail --silent --show-error --location "$CCID_TOOL_URL/$CCID_REVISION/ccid-$triple" --output "$part"
-            echo "$CCID_TOOL_SHA256  $part" | sha256sum --check --strict
-            chmod 0555 "$part"
-            mv -f "$part" "$tool"
+          : "${CCID_TOOL_ROOT:?the runner must provide CCID_TOOL_ROOT}"
+          class='heavy'
+          state="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/ccid-channel"
+          mkdir -p "$state" 2>/dev/null || true
+          chan=
+          if [ -n "${CCID_CHANNEL_URL:-}" ]; then
+            chan=$(curl --fail --silent --show-error --location --max-time 30 --retry 3 -H "Authorization: token $CCID_FORGE_TOKEN" "$CCID_CHANNEL_URL" 2>/dev/null || true)
+            if [ -n "$chan" ]; then printf '%s' "$chan" > "$state/last-good.json" 2>/dev/null || true; fi
           fi
-          test -x "$tool" || { echo "ccid $CCID_REVISION is not provisioned at $tool" >&2; exit 2; }
-          test "$("$tool" source-revision)" = "$CCID_REVISION"
-          export CCID_SOURCE_REVISION="${{ github.sha }}"
-          "$tool" render --repo "$PWD" --check
-          export CCID_BIN="$tool" CI_COMMIT_SHA="${{ github.sha }}" CI_REPOSITORY_URL="${{ github.server_url }}/${{ github.repository }}" CHECKS='rust,fmt,mpris,verify'
-          exec 'bash' '.ci/run-cached.sh'
+          # A forge that does not answer must not stop a job: the last channel this runner saw is used (and said so).
+          if [ -z "$chan" ] && [ -r "$state/last-good.json" ]; then chan=$(cat "$state/last-good.json"); echo "ccid channel: using the last known channel file" >&2; fi
+          if [ -n "$chan" ]; then
+            revision=$(printf '%s' "$chan" | jq -r --arg c "$class" '(.classes[$c] // .default).revision')
+            sha256=$(printf '%s' "$chan" | jq -r --arg c "$class" '(.classes[$c] // .default).sha256')
+          else
+            revision=${CCID_TOOL_REVISION:-}; sha256=${CCID_TOOL_SHA256:-}
+          fi
+          { [ -n "$revision" ] && [ "$revision" != null ]; } || { echo "no ccid release is selected (channel unreachable and no CCID_TOOL_REVISION)" >&2; exit 2; }
+          tool="$CCID_TOOL_ROOT/ccid/$revision/$triple/ccid"
+          if [ ! -x "$tool" ]; then
+            # Not provisioned on this runner: fetch the release by hash into the tool root, or into the runner's own cache when the root is read-only.
+            mkdir -p "$CCID_TOOL_ROOT/ccid/$revision/$triple" 2>/dev/null && [ -w "$CCID_TOOL_ROOT/ccid/$revision/$triple" ] || tool="$state/tools/$revision/$triple/ccid"
+            tool_dir=$(dirname "$tool"); mkdir -p "$tool_dir"
+            if [ ! -x "$tool" ]; then
+              [ -n "${CCID_TOOL_URL:-}" ] && [ -n "$sha256" ] && [ "$sha256" != null ] || { echo "ccid $revision is not provisioned and cannot be fetched" >&2; exit 2; }
+              # Concurrent jobs fetch the same release: each into a temp file of its own, the rename is atomic and the content is the pinned digest either way.
+              part=$(mktemp "$tool.XXXXXX")
+              curl --fail --silent --show-error --location "$CCID_TOOL_URL/$revision/ccid-$triple" --output "$part"
+              echo "$sha256  $part" | sha256sum --check --strict
+              chmod 0555 "$part"
+              mv -f "$part" "$tool"
+            fi
+          fi
+          test "$("$tool" source-revision)" = "$revision" || { echo "ccid at $tool is not $revision" >&2; exit 2; }
+          exec "$tool" job-run --job 'verify' --repository '${{ github.repository }}' --sha '${{ github.sha }}' --server-url '${{ github.server_url }}' --owner '${{ github.repository_owner }}'
       - name: Archive the locked flake inputs
         run: |
           set -eu
