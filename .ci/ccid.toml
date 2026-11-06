@@ -23,8 +23,8 @@ commands = [["bash", ".ci/verify.sh"]]
 cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["python3", "--version"], ["nix", "--version"]]
 
 [render]
-tool_revision = "10a28f64c3bb63dfade833dd219cba0f504c9345"
-tool_sha256 = "fe74ddd559238d99c9fad0655468edebac57be6031156ccbc09e35fb88959243"
+tool_revision = "2db9dddd5e43d48b6cdbb2728818957db65acf5e"
+tool_sha256 = "f5a672c714ca91a87e230713086379f06ad6df6d0ccd9112ee5fbf0cd44f95e7"
 [jobs.verify]
 scheduler = "forgejo"
 runs_on = "heavy"
