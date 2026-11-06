@@ -18,25 +18,71 @@ jobs:
   verify:
     runs-on: heavy
     steps:
-      - name: Fetch the exact commit
+      - name: Fetch the exact commit and run the declared checks
         env:
           CCID_FORGE_TOKEN: ${{ github.token }}
+          CCID_REVISION: 10a28f64c3bb63dfade833dd219cba0f504c9345
+          CCID_TOOL_SHA256: fe74ddd559238d99c9fad0655468edebac57be6031156ccbc09e35fb88959243
         run: |
           set -eu
+          # A runner may name CCID_SOURCE_ROOT: the source then lives in a stable directory per repository, job and slot instead of the per-task directory, so absolute source
+          # paths (cargo's CARGO_MANIFEST_DIR, which sccache puts into every key) repeat from run to run and the compile caches hit. A slot is claimed by a lock directory that
+          # holds the pid and start time of this shell (the shell becomes the check by exec, so the pid lives as long as the job; no file descriptor is inherited by daemons).
+          if [ -n "${CCID_SOURCE_ROOT:-}" ]; then
+            slots="${CCID_SOURCE_SLOTS:-2}"
+            base="$CCID_SOURCE_ROOT/${{ github.repository }}/${{ github.job }}"
+            mkdir -p "$base"
+            me="$$ $(cut -d' ' -f22 /proc/$$/stat)"
+            deadline=$(( $(date +%s) + ${CI_TIMEOUT:-2700} ))
+            slot=
+            while [ -z "$slot" ]; do
+              n=1
+              while [ "$n" -le "$slots" ]; do
+                if mkdir "$base/slot-$n.lock" 2>/dev/null; then slot=$n; break; fi
+                held=$(cat "$base/slot-$n.lock/owner" 2>/dev/null || true)
+                pid=${held%% *}; start=${held#* }
+                if [ -n "$pid" ] && [ "$(cut -d' ' -f22 "/proc/$pid/stat" 2>/dev/null || true)" != "$start" ]; then
+                  # The owner is gone (crashed or killed): one job wins the rename and reclaims the slot, the others retry.
+                  if mv "$base/slot-$n.lock" "$base/slot-$n.dead.$$" 2>/dev/null; then rm -r "$base/slot-$n.dead.$$"; fi
+                  continue
+                fi
+                n=$((n + 1))
+              done
+              if [ -z "$slot" ]; then
+                [ "$(date +%s)" -lt "$deadline" ] || { echo "no free source slot under $base" >&2; exit 2; }
+                sleep 5
+              fi
+            done
+            echo "$me" > "$base/slot-$slot.lock/owner"
+            mkdir -p "$base/slot-$slot"
+            cd "$base/slot-$slot"
+            echo "CCID_SOURCE_DIR=$PWD" >> "${GITHUB_ENV:-/dev/null}"
+          fi
           git init --quiet .
           git remote remove origin 2>/dev/null || true
           git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
           fetch() { git -c "http.extraHeader=Authorization: token $CCID_FORGE_TOKEN" fetch --quiet --depth 1 origin "${{ github.sha }}"; }
           # A runner may route the fetch to a local copy of the repository (its own git configuration); that copy can lag the push by seconds. Then ask the forge itself.
-          fetch || { echo "local copy lacks ${{ github.sha }}, fetching from the forge" >&2; GIT_CONFIG_COUNT=0 fetch; }
-          git checkout --quiet --force --detach FETCH_HEAD
+          # Seconds after a push the copy may not have the commit yet ("not our ref"): ask it again a few times, then the forge itself (same commit id, so the same verification).
+          fetched=
+          for attempt in 1 2 3; do
+            if fetch; then fetched=1; break; fi
+            [ "$attempt" -lt 3 ] && sleep 5
+          done
+          if [ -z "$fetched" ]; then
+            echo "local copy lacks ${{ github.sha }}, fetching from the forge" >&2
+            for attempt in 1 2 3; do
+              if GIT_CONFIG_COUNT=0 fetch; then fetched=1; break; fi
+              [ "$attempt" -lt 3 ] && sleep 5
+            done
+          fi
+          [ -n "$fetched" ] || { echo "cannot fetch ${{ github.sha }}" >&2; exit 2; }
+          # Git LFS: a repository that tracks files with LFS gets the real content, not the pointer files (the fetch above carries the token, so does the LFS transfer).
+          GIT_LFS_SKIP_SMUDGE=1 git checkout --quiet --force --detach FETCH_HEAD
+          if git show FETCH_HEAD:.gitattributes 2>/dev/null | grep -q 'filter=lfs'; then
+            git -c "http.extraHeader=Authorization: token $CCID_FORGE_TOKEN" lfs pull origin
+          fi
           git clean --quiet -ffdx
-      - name: Run the declared checks
-        env:
-          CCID_REVISION: bd9aff07073185fb0a3503bab331aedefb6d8fd2
-          CCID_TOOL_SHA256: 38c0eadf2a2adb406f83c7d4892bc01a0a10b95671e1e671358e43a257bb5d23
-        run: |
-          set -eu
           : "${CCID_TOOL_ROOT:?the runner must provide CCID_TOOL_ROOT}"
           triple="${CCID_TOOL_TRIPLE:-$(uname -m)-unknown-linux-gnu}"
           tool="$CCID_TOOL_ROOT/ccid/$CCID_REVISION/$triple/ccid"
@@ -56,3 +102,12 @@ jobs:
           "$tool" render --repo "$PWD" --check
           export CCID_BIN="$tool" CI_COMMIT_SHA="${{ github.sha }}" CI_REPOSITORY_URL="${{ github.server_url }}/${{ github.repository }}" CHECKS='rust,fmt,mpris,verify'
           exec 'bash' '.ci/run-cached.sh'
+      - name: Archive the locked flake inputs
+        run: |
+          set -eu
+          cd "${CCID_SOURCE_DIR:-.}"
+          if [ -f flake.lock ] && [ -n "${CCID_FLAKE_ARCHIVE_PUSH:-}" ]; then
+            nix flake archive --json . | jq -r '[.. | .path? // empty] | unique | .[]' | xargs --no-run-if-empty $CCID_FLAKE_ARCHIVE_PUSH
+          else
+            echo "no flake.lock or no archive target on this runner: nothing archived"
+          fi
