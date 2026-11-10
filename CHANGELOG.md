@@ -26,6 +26,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fresh bar. A stalled connection used to fill the user's bus quota silently, and
   the full quota then broke every `systemctl --user daemon-reload`.
 
+- Keep exactly one bar per live output when outputs come and go (a KVM switching a
+  monitor away, a dock being pulled). The listener for output events started only after
+  the first bars were built, so an output that vanished while its bar was still being built
+  was never reported: the bar was mapped for an output that no longer existed, never closed,
+  and the compositor placed it on whichever output was left, stacking a second bar there.
+  Bars are now made to match the outputs that exist, on every output event and after the
+  first load, so a lost, repeated or reordered event cannot leave a stray or a duplicate bar,
+  and a listener that falls behind re-reads the outputs instead of stopping.
+- Release everything a bar owns when it is closed. A closed bar was never freed whenever it
+  held a module with a background task (clock, workspaces, tray, ...): the bar, its widgets
+  and the module's tasks stayed alive and kept working, so every output that went away and
+  came back cost memory and CPU for good. A bar now tells its modules when it closes, and a
+  module task whose receiver is gone ends quietly. Closing a bar also closes the hotspot
+  window of an autohiding bar, and a configuration reload closes the old bars instead of
+  only forgetting them.
+- Add `checks/output-cycle.sh`, a real-compositor check of the output add/remove cycle
+  and of the startup race, with a whole-output screenshot of every stage, and run it in the
+  release gate.
+
 The entries below are the inherited Ironbar changelog at the fork base.
 
 ## [v0.19.0] - 2026-05-17

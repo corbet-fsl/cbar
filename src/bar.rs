@@ -7,14 +7,59 @@ use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow, CenterBox, EventControllerMotion, Orientation, Window};
 use gtk_layer_shell::LayerShell;
 use std::cell::{Cell, RefCell};
+use std::future::Future;
 use std::rc::Rc;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use tokio::sync::watch;
 use tracing::{debug, error, info};
 
 fn layout_tracing_on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("CBAR_LAYOUT_TRACE").is_some())
+}
+
+fn bar_tracing_on() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("CBAR_BAR_TRACE").is_some())
+}
+
+/// The number of bars that exist, counted from the moment one is created to the moment the last
+/// handle to it is gone. A bar that was closed but is still referenced from somewhere (a module
+/// task, a receiver loop) stays counted, which is how a leak of closed bars becomes visible. With
+/// `CBAR_BAR_TRACE` set, every creation and release is written to stderr; it is off by default.
+static LIVE_BARS: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Debug)]
+struct Lifetime {
+    name: String,
+    output: String,
+}
+
+impl Lifetime {
+    fn begin(name: &str, output: &str) -> Rc<Self> {
+        let live = LIVE_BARS.fetch_add(1, Ordering::Relaxed) + 1;
+        if bar_tracing_on() {
+            eprintln!("cbar-bar-trace event=created name={name} output={output} live={live}");
+        }
+        Rc::new(Self {
+            name: name.to_string(),
+            output: output.to_string(),
+        })
+    }
+}
+
+impl Drop for Lifetime {
+    fn drop(&mut self) {
+        let live = LIVE_BARS.fetch_sub(1, Ordering::Relaxed) - 1;
+        if bar_tracing_on() {
+            eprintln!(
+                "cbar-bar-trace event=released name={} output={} live={live}",
+                self.name, self.output
+            );
+        }
+    }
 }
 
 fn size_fields(widget: &impl IsA<gtk::Widget>) -> String {
@@ -97,6 +142,11 @@ pub struct Bar {
 
     autohide_state: Rc<RefCell<Option<AutohideState>>>,
 
+    /// Becomes true when the bar is closed. Everything that serves the bar's modules waits on it
+    /// (see [`Bar::closed`]) so that nothing outlives the bar.
+    closed: Rc<watch::Sender<bool>>,
+    _lifetime: Rc<Lifetime>,
+
     inner: Inner,
 }
 
@@ -136,6 +186,8 @@ impl Bar {
 
         window.set_child(Some(&content));
 
+        let lifetime = Lifetime::begin(&name, &monitor_name);
+
         Self {
             name,
             monitor_name,
@@ -147,6 +199,8 @@ impl Bar {
             center,
             end,
             autohide_state: rc_mut!(None),
+            closed: Rc::new(watch::channel(false).0),
+            _lifetime: lifetime,
             inner: Inner::New {
                 config: Some(config),
             },
@@ -279,9 +333,32 @@ impl Bar {
     }
 
     /// Closes the bar, consuming it.
+    ///
+    /// This takes down everything the bar owns: its windows (the bar, and the hotspot window of an
+    /// autohiding bar), a pending autohide timer, and the receive loops of its modules. The loops
+    /// are what keep widgets and the bar itself alive, so they must end with it.
     pub fn close(self) {
+        self.closed.send_replace(true);
+
+        if let Some(state) = self.autohide_state.borrow_mut().take() {
+            if let Some(timeout_id) = state.timeout_id {
+                timeout_id.remove();
+            }
+            state.hotspot_window.close();
+            state.hotspot_window.destroy();
+        }
+
         self.window.close();
         self.window.destroy();
+    }
+
+    /// Completes when the bar is closed. The future owns what it needs, so it can outlive the bar.
+    pub fn closed(&self) -> impl Future<Output = ()> + 'static {
+        let mut closed = self.closed.subscribe();
+        async move {
+            // The bar being dropped without ever being closed counts as closed, too.
+            let _ = closed.wait_for(|closed| *closed).await;
+        }
     }
 
     /// Sets up GTK layer shell for a provided application window.

@@ -7,13 +7,17 @@ use crate::channels::SyncSenderExt;
 use crate::{Ironbar, arc_mut, debug, get_display, info, lock, register_client};
 use gtk::gdk::Monitor;
 use gtk::gdk::prelude::*;
-use smithay_client_toolkit::output::OutputInfo;
 use tokio::sync::broadcast::{self, Sender};
 
-#[derive(Debug, Clone)]
+/// What happened to an output.
+///
+/// The event only says that the set of outputs changed. It deliberately carries no output
+/// objects: the listener reads the outputs that exist at that moment, so a late, repeated or
+/// reordered event can never make it act on a stale view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonitorState {
     Disconnected,
-    Connected(OutputInfo, glib::SendWeakRef<Monitor>),
+    Connected,
 }
 
 #[derive(Debug, Clone)]
@@ -26,12 +30,13 @@ pub struct MonitorEvent {
 /// 1. Through a wayland client event
 /// 2. Through a GDK event
 ///
-/// We need to collate both events before we can call `load_output_bars`.
+/// We need to collate both events before we report an output as connected, because bars need both
+/// the Wayland output (its name and description) and the GDK monitor (what the window binds to).
 enum InternalMonitorState {
     Disconnected,
-    WaylandConnected(OutputInfo),
-    GdkConnected(glib::SendWeakRef<Monitor>),
-    BothConnected(OutputInfo, glib::SendWeakRef<Monitor>),
+    WaylandConnected,
+    GdkConnected,
+    BothConnected,
 }
 
 struct MonitorProxy {
@@ -46,23 +51,19 @@ impl MonitorProxy {
         self
     }
 
-    fn connect_wayland(&mut self, wl_monitor: &OutputInfo) -> &mut Self {
+    fn connect_wayland(&mut self) -> &mut Self {
         self.state = match &self.state {
-            InternalMonitorState::GdkConnected(gdk_monitor) => {
-                InternalMonitorState::BothConnected(wl_monitor.clone(), gdk_monitor.clone())
-            }
-            _ => InternalMonitorState::WaylandConnected(wl_monitor.clone()),
+            InternalMonitorState::GdkConnected => InternalMonitorState::BothConnected,
+            _ => InternalMonitorState::WaylandConnected,
         };
 
         self
     }
 
-    fn connect_gdk(&mut self, gdk_monitor: glib::SendWeakRef<Monitor>) -> &mut Self {
+    fn connect_gdk(&mut self) -> &mut Self {
         self.state = match &self.state {
-            InternalMonitorState::WaylandConnected(wl_monitor) => {
-                InternalMonitorState::BothConnected(wl_monitor.clone(), gdk_monitor)
-            }
-            _ => InternalMonitorState::GdkConnected(gdk_monitor),
+            InternalMonitorState::WaylandConnected => InternalMonitorState::BothConnected,
+            _ => InternalMonitorState::GdkConnected,
         };
 
         self
@@ -77,11 +78,11 @@ impl MonitorProxy {
                     state: MonitorState::Disconnected,
                 });
             }
-            InternalMonitorState::BothConnected(wl_output, gdk_output) => {
+            InternalMonitorState::BothConnected => {
                 info!("Monitor {} connected", self.connector);
                 tx.send_expect(MonitorEvent {
                     connector: self.connector.clone(),
-                    state: MonitorState::Connected(wl_output.clone(), gdk_output.clone()),
+                    state: MonitorState::Connected,
                 });
             }
             _ => {}
@@ -133,7 +134,7 @@ impl Client {
                         });
                         match event.event_type {
                             wayland::OutputEventType::New => {
-                                entry.connect_wayland(&event.output).maybe_send(&output_tx);
+                                entry.connect_wayland().maybe_send(&output_tx);
                             }
                             wayland::OutputEventType::Destroyed => {
                                 entry.disconnect().maybe_send(&output_tx);
@@ -174,9 +175,7 @@ impl Client {
                                             connector: connector.to_string(),
                                             state: InternalMonitorState::Disconnected,
                                         })
-                                        .connect_gdk(glib::SendWeakRef::from(ObjectExt::downgrade(
-                                            m,
-                                        )))
+                                        .connect_gdk()
                                         .maybe_send(&output_tx);
                                 }
                             });

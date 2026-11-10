@@ -92,10 +92,27 @@ pub trait AsyncSenderExt<T>: Sync + Send + Sized + Clone {
 impl<T: Send> AsyncSenderExt<T> for mpsc::Sender<T> {
     #[inline]
     async fn send_expect(&self, message: T) {
-        self.send(message)
-            .await
-            .expect(crate::error::ERR_CHANNEL_SEND);
+        if self.send(message).await.is_err() {
+            receiver_gone();
+        }
     }
+}
+
+/// Called when a message cannot be sent because its receiver no longer exists.
+///
+/// The receiver of a module's updates lives exactly as long as the bar the module belongs to, so
+/// this is how a module task learns that its bar was closed: the task ends here, instead of
+/// running on for ever against widgets that are gone. Inside a task the task is unwound without
+/// the panic report, which would only tell that a bar was closed. Anywhere else it is a bug in the
+/// caller and stays a loud panic.
+#[cold]
+fn receiver_gone() -> ! {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tracing::debug!("receiver is gone, ending the task that sends to it");
+        std::panic::resume_unwind(Box::new(crate::error::ERR_CHANNEL_SEND));
+    }
+
+    panic!("{}", crate::error::ERR_CHANNEL_SEND);
 }
 
 pub trait MpscReceiverExt<T> {
@@ -108,6 +125,16 @@ pub trait MpscReceiverExt<T> {
     /// to be consumed inside the closure.
     /// This avoids needing to `element.clone()` everywhere.
     fn recv_glib<D, Fn>(self, deps: D, f: Fn)
+    where
+        D: Dependency,
+        D::Target: 'static,
+        Fn: FnMut(&D::Target, T) + 'static;
+
+    /// Like [`MpscReceiverExt::recv_glib`], but the loop also ends as soon as `until` completes.
+    ///
+    /// Ending the loop drops the receiver and everything the callback holds, and with the receiver
+    /// gone the tasks that send to it learn that they are no longer needed.
+    fn recv_glib_until<D, Fn>(self, deps: D, until: impl Future<Output = ()> + 'static, f: Fn)
     where
         D: Dependency,
         D::Target: 'static,
@@ -125,6 +152,32 @@ impl<T: 'static> MpscReceiverExt<T> for mpsc::Receiver<T> {
         glib::spawn_future_local(async move {
             while let Some(val) = self.recv().await {
                 f(&deps, val);
+            }
+        });
+    }
+
+    fn recv_glib_until<D, Fn>(
+        mut self,
+        deps: D,
+        until: impl Future<Output = ()> + 'static,
+        mut f: Fn,
+    ) where
+        D: Dependency,
+        D::Target: 'static,
+        Fn: FnMut(&D::Target, T) + 'static,
+    {
+        let deps = deps.clone_content();
+        glib::spawn_future_local(async move {
+            let mut until = std::pin::pin!(until);
+            loop {
+                tokio::select! {
+                    biased;
+                    () = &mut until => break,
+                    val = self.recv() => match val {
+                        Some(val) => f(&deps, val),
+                        None => break,
+                    },
+                }
             }
         });
     }
@@ -178,7 +231,8 @@ where
                         );
                     }
                     Err(err) => {
-                        tracing::error!("{err:?}");
+                        // `Closed`: the module this listens to is gone.
+                        tracing::debug!("{err:?}");
                         break;
                     }
                 }
@@ -206,7 +260,8 @@ where
                         );
                     }
                     Err(err) => {
-                        tracing::error!("{err:?}");
+                        // `Closed`: the module this listens to is gone.
+                        tracing::debug!("{err:?}");
                         break;
                     }
                 }

@@ -19,16 +19,14 @@ use gtk::gdk::{Display, Monitor};
 use gtk::prelude::*;
 use smithay_client_toolkit::output::OutputInfo;
 use tokio::runtime::Runtime;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::oneshot::Sender;
 use tokio::task::{JoinHandle, block_in_place};
-#[cfg(feature = "ipc")]
-use tracing::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::bar::{Bar, create_bar};
 use crate::channels::SyncSenderExt;
 use crate::clients::Clients;
-use crate::clients::outputs::MonitorState;
 use crate::config::{Config, ConfigLocation, MonitorConfig};
 use crate::desktop_file::DesktopFiles;
 use crate::error::ExitCode;
@@ -37,6 +35,7 @@ use crate::ironvar::VariableManager;
 use crate::style::{CssSource, load_css};
 
 mod bar;
+mod bar_plan;
 #[cfg(feature = "zbus")]
 mod bus_guard;
 mod channels;
@@ -293,8 +292,18 @@ impl Ironbar {
                     .image_provider
                     .set_icon_theme(instance.config.borrow().icon_theme.as_deref());
 
+                // Listen for output events *before* the first bars are built. Building a bar takes
+                // a while, and an output that goes away meanwhile (a KVM switching the display
+                // away, a laptop dock being pulled) used to be reported before anyone listened:
+                // its bar was then mapped for an output that no longer existed, was never closed,
+                // and the compositor placed it on whichever output was left.
+                let outputs = instance.clients.borrow_mut().outputs();
+                let mut rx_outputs = outputs.subscribe();
+
+                outputs.start(&instance.clone());
+
                 // Load initial bars
-                match load_output_bars(&instance.clone(), &app) {
+                match sync_output_bars(&instance.clone(), &app) {
                     Ok(()) => {}
                     Err(report) => {
                         error!("{:?}", report);
@@ -307,32 +316,21 @@ impl Ironbar {
                     glib::idle_add_local_once(move || launcher.warm());
                 }
 
-                let outputs = instance.clients.borrow_mut().outputs();
-                let mut rx_outputs = outputs.subscribe();
-
-                outputs.start(&instance.clone());
-
-                // Listen for monitor events
-                while let Ok(event) = rx_outputs.recv().await {
-                    match event.state {
-                        MonitorState::Disconnected => {
-                            instance
-                                .bars
-                                .borrow_mut()
-                                .extract_if(.., |bar| bar.monitor_name() == event.connector)
-                                .for_each(Bar::close);
+                // Every output event, and every event that was dropped because the listener fell
+                // behind, is only a reason to look again: the bars are made to match the outputs
+                // that exist now, so a missed, repeated or reordered event cannot leave a bar
+                // behind or a second one beside it.
+                loop {
+                    match rx_outputs.recv().await {
+                        Ok(event) => debug!("Output {}: {:?}", event.connector, event.state),
+                        Err(RecvError::Lagged(missed)) => {
+                            warn!("Missed {missed} output events, re-reading the outputs");
                         }
-                        MonitorState::Connected(wl_output, gdk_output) => {
-                            if let Some(gdk_output) = gdk_output.upgrade() {
-                                match load_output_bars_for(&instance, &app, &wl_output, &gdk_output)
-                                {
-                                    Ok(mut new_bars) => {
-                                        instance.bars.borrow_mut().append(&mut new_bars);
-                                    }
-                                    Err(err) => error!("{err:?}"),
-                                }
-                            }
-                        }
+                        Err(RecvError::Closed) => break,
+                    }
+
+                    if let Err(err) = sync_output_bars(&instance, &app) {
+                        error!("{err:?}");
                     }
                 }
             });
@@ -508,46 +506,109 @@ fn load_output_bars_for(
     Ok(bars)
 }
 
-/// Loads all the bars associated with an output.
+/// Finds the GDK monitor of an output. The connector is unique, so it wins; a description is shared
+/// by two identical panels, so it is only a fallback.
+fn find_monitor(
+    monitors: &gtk::gio::ListModel,
+    connector: &str,
+    description: &str,
+) -> Option<Monitor> {
+    let monitors: Vec<Monitor> = (0..monitors.n_items())
+        .filter_map(|index| monitors.item(index).and_downcast::<Monitor>())
+        .filter(Monitor::is_valid)
+        .collect();
+
+    monitors
+        .iter()
+        .find(|monitor| monitor.connector().as_deref() == Some(connector))
+        .or_else(|| {
+            monitors.iter().find(|monitor| {
+                !description.is_empty() && monitor.description().as_deref() == Some(description)
+            })
+        })
+        .cloned()
+}
+
+/// The outputs that exist right now: what the compositor lists, paired with the GDK monitor that a
+/// window on that output binds to.
 ///
 /// # Errors
 ///
-/// Will error if any output doies not have a name.
-pub fn load_output_bars(ironbar: &Rc<Ironbar>, app: &Application) -> Result<()> {
+/// Will error if any output does not have a name.
+fn live_outputs(ironbar: &Rc<Ironbar>) -> Result<Vec<(OutputInfo, Monitor)>> {
     let wl = ironbar.clients.borrow_mut().wayland();
     let outputs = wl.output_info_all();
 
     let display = get_display();
     let monitors = display.monitors();
 
+    let mut live = Vec::with_capacity(outputs.len());
     for output in outputs {
         let Some(monitor_name) = &output.name else {
             return Err(Report::msg("Output missing monitor name"));
         };
 
-        let monitor_desc = &output.description.clone().unwrap_or_default();
-        let find_monitor = || {
-            for i in 0..monitors.n_items() {
-                let Some(monitor) = monitors.item(i).and_downcast::<Monitor>() else {
-                    continue;
-                };
-
-                if monitor.description().unwrap_or_default().as_str() == monitor_desc
-                    || monitor.connector().unwrap_or_default().as_str() == monitor_name
-                {
-                    return Some(monitor);
-                }
-            }
-
-            None
-        };
-
-        let Some(monitor) = find_monitor() else {
+        let monitor_desc = output.description.clone().unwrap_or_default();
+        let Some(monitor) = find_monitor(&monitors, monitor_name, &monitor_desc) else {
             error!("failed to find matching monitor for {}", monitor_name);
             continue;
         };
 
-        match load_output_bars_for(ironbar, app, &output, &monitor) {
+        live.push((output, monitor));
+    }
+
+    Ok(live)
+}
+
+/// Makes the bars match the outputs: every output that exists has its bars, an output that is gone
+/// has none.
+///
+/// This is the only place that creates or closes bars for output changes. It works from the outputs
+/// that exist when it runs and never from the history of events, so running it again is always safe.
+/// It also serves the initial load and a configuration reload, where no bars exist yet.
+///
+/// # Errors
+///
+/// Will error if any output does not have a name.
+pub fn sync_output_bars(ironbar: &Rc<Ironbar>, app: &Application) -> Result<()> {
+    let live = live_outputs(ironbar)?;
+
+    let live_names: Vec<&str> = live
+        .iter()
+        .filter_map(|(output, _)| output.name.as_deref())
+        .collect();
+    let bar_names: Vec<String> = ironbar
+        .bars
+        .borrow()
+        .iter()
+        .map(|bar| bar.monitor_name().to_string())
+        .collect();
+    let bar_names: Vec<&str> = bar_names.iter().map(String::as_str).collect();
+
+    let plan = bar_plan::plan_bars(&live_names, &bar_names);
+
+    for connector in &plan.close {
+        info!("Output {connector} is gone, closing its bars");
+
+        // Take the bars out before closing them: closing runs GTK callbacks that may look at the
+        // list of bars.
+        let gone: Vec<Bar> = ironbar
+            .bars
+            .borrow_mut()
+            .extract_if(.., |bar| bar.monitor_name() == connector)
+            .collect();
+        gone.into_iter().for_each(Bar::close);
+    }
+
+    for (output, monitor) in &live {
+        let Some(connector) = output.name.as_deref() else {
+            continue;
+        };
+        if !plan.open.iter().any(|name| name == connector) {
+            continue;
+        }
+
+        match load_output_bars_for(ironbar, app, output, monitor) {
             Ok(mut bars) => ironbar.bars.borrow_mut().append(&mut bars),
             Err(err) => error!("{err:?}"),
         }

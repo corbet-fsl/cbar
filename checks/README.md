@@ -56,6 +56,26 @@ before startup, so the check cannot read personal configuration or target the ca
 session. The compositor, cbar, and virtual-keyboard drivers each run in an owned session group;
 cleanup sends the whole group bounded `TERM` then `KILL`, including in-group wrapper descendants.
 
+`output-cycle.sh` proves that cbar keeps exactly one bar per live output while outputs come and go.
+It hosts cbar in a private headless compositor with two outputs and disables and re-enables the
+second one through the compositor's own IPC socket, the way a KVM-switching monitor does. After every
+step each output must carry exactly one bar (or none while it is disabled), counted twice
+independently: by the exclusive zone the bars reserve, and by the pixels of a whole-output
+screenshot. A second scenario disables an output at the moment cbar starts building that output's
+bar, the window in which the removal event used to be lost and the orphaned bar was placed on a
+surviving output. With `CBAR_BAR_TRACE` set, which the check does, cbar also reports how many bars it
+still holds, so a closed bar that stays referenced from a module task or receiver loop fails the check
+even when every screen looks right.
+
+```sh
+checks/output-cycle.sh target/debug/cbar -- scroll -c '{config}'
+CYCLES=30 RACES=5 SHOT_DIR=shots checks/output-cycle.sh target/debug/cbar -- scroll -c '{config}'
+```
+
+Every compositor call names an explicit IPC socket that was discovered inside the check's private
+runtime directory; the caller's graphical session is never addressed. `SHOT_DIR` keeps a whole-output
+screenshot of every stage for inspection.
+
 The `mpris` CI selector runs the actual music polling workers on an isolated
 D-Bus session with no player. It verifies that repeated bus-name churn leaves no
 idle subscriber behind. The test is ignored by ordinary `cargo test` so it never

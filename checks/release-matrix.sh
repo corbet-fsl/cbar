@@ -189,6 +189,9 @@ step real-layer-headless
 PERF_OUT="$performance_out" \
     checks/headless-session.sh "$target_dir/release/cbar" "$input_driver" -- "${compositor[@]}"
 
+step output-cycle
+checks/output-cycle.sh "$target_dir/release/cbar" -- "${compositor[@]}"
+
 if [[ -n ${PERF_BASELINE:-} ]]; then
     step performance-regression
     python3 checks/compare-performance.py "$PERF_BASELINE" "$performance_out"

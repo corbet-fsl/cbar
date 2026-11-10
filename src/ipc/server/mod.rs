@@ -179,7 +179,9 @@ impl Ipc {
             }
             Command::Reload => {
                 info!("Closing existing bars");
-                ironbar.bars.borrow_mut().clear();
+                // Close them, not just forget them: closing is what ends their modules.
+                let bars = std::mem::take(&mut *ironbar.bars.borrow_mut());
+                bars.into_iter().for_each(crate::bar::Bar::close);
 
                 let windows = application.windows();
                 for window in windows {
@@ -195,7 +197,7 @@ impl Ipc {
 
                 ironbar.reload_config();
 
-                match crate::load_output_bars(ironbar, application) {
+                match crate::sync_output_bars(ironbar, application) {
                     Ok(()) => {}
                     Err(err) => error!("{err:?}"),
                 }

@@ -455,35 +455,41 @@ impl ModuleFactory for BarModuleFactory {
         TSend: Debug + Clone + Send + 'static,
     {
         let bar = self.bar().clone();
-        rx.recv_glib(&self.popup, move |popup, ev| match ev {
-            ModuleUpdateEvent::Update(update) => {
-                trace!("received update for {name} [#{id}]: {update:?}");
-                tx.send_expect(update);
-            }
-            ModuleUpdateEvent::TogglePopup(button_id) if !disable_popup => {
-                debug!("Toggling popup for {name} [#{id}] (button id: {button_id})");
+        // The loop ends with the bar. It holds the bar, the popup and the module's broadcast
+        // sender, so without the end it would keep a closed bar alive for ever.
+        rx.recv_glib_until(
+            &self.popup,
+            self.bar().closed(),
+            move |popup, ev| match ev {
+                ModuleUpdateEvent::Update(update) => {
+                    trace!("received update for {name} [#{id}]: {update:?}");
+                    tx.send_expect(update);
+                }
+                ModuleUpdateEvent::TogglePopup(button_id) if !disable_popup => {
+                    debug!("Toggling popup for {name} [#{id}] (button id: {button_id})");
 
-                if popup.visible() && popup.current_widget().unwrap_or_default() == id {
+                    if popup.visible() && popup.current_widget().unwrap_or_default() == id {
+                        popup.hide();
+                    } else {
+                        popup.show(id, button_id);
+                    }
+                }
+                ModuleUpdateEvent::OpenPopup(button_id) if !disable_popup => {
+                    debug!("Opening popup for {name} [#{id}] (button id: {button_id})");
                     popup.hide();
-                } else {
                     popup.show(id, button_id);
                 }
-            }
-            ModuleUpdateEvent::OpenPopup(button_id) if !disable_popup => {
-                debug!("Opening popup for {name} [#{id}] (button id: {button_id})");
-                popup.hide();
-                popup.show(id, button_id);
-            }
-            ModuleUpdateEvent::ClosePopup if !disable_popup => {
-                debug!("Closing popup for {name} [#{id}]");
-                popup.hide();
-            }
-            ModuleUpdateEvent::LockVisible(lock) => {
-                debug!("Setting bar locked status: {lock}");
-                bar.set_locked(lock);
-            }
-            _ => {}
-        });
+                ModuleUpdateEvent::ClosePopup if !disable_popup => {
+                    debug!("Closing popup for {name} [#{id}]");
+                    popup.hide();
+                }
+                ModuleUpdateEvent::LockVisible(lock) => {
+                    debug!("Setting bar locked status: {lock}");
+                    bar.set_locked(lock);
+                }
+                _ => {}
+            },
+        );
     }
 
     fn ironbar(&self) -> &Rc<Ironbar> {
@@ -531,35 +537,39 @@ impl ModuleFactory for PopupModuleFactory {
     {
         let button_id = self.button_id;
 
-        rx.recv_glib(&self.popup, move |popup, ev| match ev {
-            ModuleUpdateEvent::Update(update) => {
-                tx.send_expect(update);
-            }
-            ModuleUpdateEvent::TogglePopup(_) if !disable_popup => {
-                debug!(
-                    "Toggling popup for {} [#{}] (button id: {button_id})",
-                    name, id
-                );
-                if popup.visible() && popup.current_widget().unwrap_or_default() == id {
+        rx.recv_glib_until(
+            &self.popup,
+            self.bar().closed(),
+            move |popup, ev| match ev {
+                ModuleUpdateEvent::Update(update) => {
+                    tx.send_expect(update);
+                }
+                ModuleUpdateEvent::TogglePopup(_) if !disable_popup => {
+                    debug!(
+                        "Toggling popup for {} [#{}] (button id: {button_id})",
+                        name, id
+                    );
+                    if popup.visible() && popup.current_widget().unwrap_or_default() == id {
+                        popup.hide();
+                    } else {
+                        popup.show(id, button_id);
+                    }
+                }
+                ModuleUpdateEvent::OpenPopup(_) if !disable_popup => {
+                    debug!(
+                        "Opening popup for {} [#{}] (button id: {button_id})",
+                        name, id
+                    );
                     popup.hide();
-                } else {
                     popup.show(id, button_id);
                 }
-            }
-            ModuleUpdateEvent::OpenPopup(_) if !disable_popup => {
-                debug!(
-                    "Opening popup for {} [#{}] (button id: {button_id})",
-                    name, id
-                );
-                popup.hide();
-                popup.show(id, button_id);
-            }
-            ModuleUpdateEvent::ClosePopup if !disable_popup => {
-                debug!("Closing popup for {} [#{}]", name, id);
-                popup.hide();
-            }
-            _ => {}
-        });
+                ModuleUpdateEvent::ClosePopup if !disable_popup => {
+                    debug!("Closing popup for {} [#{}]", name, id);
+                    popup.hide();
+                }
+                _ => {}
+            },
+        );
     }
 
     fn ironbar(&self) -> &Rc<Ironbar> {
