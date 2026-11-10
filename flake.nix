@@ -33,6 +33,39 @@
       # Devshell
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
+          # RUNPATH of everything linked in this shell: a binary has to start
+          # without LD_LIBRARY_PATH (env -i, a child with a cleared
+          # environment), and it must not name a directory that does not
+          # exist.
+          #
+          # A shell has no $out: `nix develop` points it at ./outputs/out, a
+          # directory that is never built. stdenv would still put
+          # `-rpath $out/lib` into NIX_LDFLAGS, so NIX_NO_SELF_RPATH drops it.
+          #
+          # The nix ld wrapper used to add a real rpath for every library a
+          # link uses. The link driver here (wild-cc, or mold through
+          # COMPILER_PATH) does not pass through that wrapper, but it does
+          # receive NIX_LDFLAGS. The hook therefore names the directory of
+          # every library the linker can find (each -L store directory) and
+          # of the compiler runtime (libgcc_s) itself, the same rule as ccid's
+          # check-shell.
+          NIX_NO_SELF_RPATH = true;
+          shellHook = ''
+            _rpath_flags=""
+            for _flag in $NIX_LDFLAGS; do
+              case "$_flag" in
+                -L${builtins.storeDir}/*)
+                  case " $_rpath_flags " in
+                    *" -rpath ''${_flag#-L} "*) ;;
+                    *) _rpath_flags="$_rpath_flags -rpath ''${_flag#-L}" ;;
+                  esac
+                  ;;
+              esac
+            done
+            export NIX_LDFLAGS="-rpath ${pkgs.lib.getLib pkgs.stdenv.cc.cc}/lib$_rpath_flags $NIX_LDFLAGS"
+            unset _rpath_flags _flag
+          '';
+
           packages = with pkgs; [
             cargo
             clippy
