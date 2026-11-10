@@ -107,6 +107,11 @@ label = "cbar on {output}"
 
 [[monitors.{output}.start]]
 type = "workspaces"
+all_monitors = true
+
+[[monitors.{output}.start]]
+type = "launcher"
+show_names = false
 
 [[monitors.{output}.start]]
 type = "music"
