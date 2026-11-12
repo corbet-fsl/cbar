@@ -26,7 +26,7 @@ cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["python3", "--version"
 render_schema = 2
 [jobs.verify]
 scheduler = "forgejo"
-runs_on = "heavy"
+runs_on = "linux"
 checks = ["rust", "fmt", "mpris", "verify"]
 workflow = "ci"
 command = ["bash", ".ci/run-cached.sh"]
