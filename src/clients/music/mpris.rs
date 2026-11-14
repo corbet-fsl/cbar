@@ -421,7 +421,8 @@ mod tests {
                 .output()
                 .expect("dbus-send must be available in the development shell");
             assert!(output.status.success());
-            let reply = String::from_utf8(output.stdout).unwrap();
+            let reply = String::from_utf8(output.stdout)
+                .expect("dbus-send printed a reply that is not valid UTF-8");
             let unique_names = reply
                 .lines()
                 .filter(|line| line.contains("string \":"))
