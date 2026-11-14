@@ -30,4 +30,3 @@ runs_on = "linux"
 checks = ["rust", "fmt", "mpris", "verify"]
 workflow = "ci"
 command = ["bash", ".ci/run-cached.sh"]
-events = ["manual"]

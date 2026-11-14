@@ -3,6 +3,9 @@
 # A newer run of the same ref cancels the older one.
 name: ci
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 concurrency:
   group: ccid-ci-${{ github.ref }}
