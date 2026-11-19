@@ -12,7 +12,7 @@ Apache-2.0 two years after each version is made available.
 The fork keeps Ironbar's configuration formats, module configuration, styling
 surface, extension points, and supported compositor scope. Fork-specific
 features are additive. A release must pass the compatibility and regression
-gates documented in `docs/Cbar architecture.md` before it is published.
+gates documented in `docs/Cbar-architecture.md` before it is published.
 
 Repository, package, application, and release identities are intentionally
 separate from upstream ownership. The public product is `corbet-labs/cbar`, its

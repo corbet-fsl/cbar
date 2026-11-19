@@ -89,7 +89,7 @@ in let
       # change the application and must invalidate the final package.
       embeddedInputs = fs.unions [
         (lib.path.append root "README.md")
-        (lib.path.append root "docs/Dynamic values.md")
+        (lib.path.append root "docs/Dynamic-values.md")
         (lib.path.append root "docs/Ironvars.md")
         (lib.path.append root "lua/init.lua")
         (lib.path.append root "lua/draw.lua")

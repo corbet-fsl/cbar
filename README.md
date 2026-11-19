@@ -67,7 +67,7 @@ checks/release-matrix.sh wtype -- sway -c '{config}'
 ```
 
 See [checks/README.md](checks/README.md) for the measured startup, memory, idle,
-and redraw contracts. See [docs/Cbar architecture.md](docs/Cbar%20architecture.md)
+and redraw contracts. See [docs/Cbar-architecture.md](docs/Cbar-architecture.md)
 for ownership and failure boundaries.
 
 ## Upstream and license
