@@ -4,18 +4,6 @@
   "tool_revision": "",
   "manifest_sha256": "9bba98eb50e8f2524e1f65047cecd5f11b9c493c949f455cf8da0d4bc8f9f9d0",
   "jobs": {
-    "portable-paths": {
-      "job": "portable-paths",
-      "scheduler": "forgejo",
-      "checks": [
-        "portable-paths"
-      ],
-      "workflow": "portable-paths",
-      "command": [
-        "ccid:run-declared-checks"
-      ],
-      "runs_on": "linux"
-    },
     "verify": {
       "job": "verify",
       "scheduler": "forgejo",
@@ -31,6 +19,7 @@
         ".ci/run-cached.sh"
       ],
       "runs_on": "linux",
+      "fold_portable_paths": "enforce",
       "archive_inputs": true
     }
   }
